@@ -98,6 +98,18 @@ pnpm tauri android dev
 pnpm tauri android dev --host
 ```
 
+To build a locally signed Android APK, generate a throwaway signing keystore
+once and then build:
+
+```bash
+bash scripts/android-keystore.sh
+pnpm tauri android build
+```
+
+The script writes `keystore.properties` and the keystore into the gitignored
+`apps/readest-app/src-tauri/gen/android/`, where the Gradle build picks them up
+automatically.
+
 #### iOS
 
 ```bash
