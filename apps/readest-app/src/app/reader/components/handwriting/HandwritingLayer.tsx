@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useReaderStore } from '@/store/readerStore';
 import { useHandwritingStore } from '@/store/handwritingStore';
 import { useThemeStore } from '@/store/themeStore';
+import { useBookProgress } from '@/store/readerProgressStore';
+import { useBookDataStore } from '@/store/bookDataStore';
 import { Insets } from '@/types/misc';
 import {
   HandwritingPoint,
@@ -14,6 +16,7 @@ import {
   strokeIntersectsEraser,
   strokeToSvgPath,
   toNormalizedPoint,
+  extractTextAnchorForStroke,
   REFERENCE_WIDTH,
 } from '@/utils/handwriting';
 import {
@@ -42,6 +45,9 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   const bookHash = bookKey.split('-')[0]!;
   const view = useReaderStore((s) => s.getView(bookKey));
   const { isDarkMode } = useThemeStore();
+  const progress = useBookProgress(bookKey);
+  const bookData = useBookDataStore((s) => s?.booksData?.[bookHash]);
+  const isFixedLayout = bookData?.isFixedLayout ?? false;
 
   const {
     activeBookKey,
@@ -67,26 +73,63 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     initBookHandwriting(bookKey, bookHash);
   }, [bookKey, bookHash]);
 
-  // Track page / section index from Foliate relocate events
+  // 1. Synchronize page index reactively from useBookProgress
+  useEffect(() => {
+    if (!progress) return;
+    const pageInfo = isFixedLayout ? progress.section : progress.pageinfo;
+    const currentIdx =
+      pageInfo?.current ??
+      (typeof progress.page === 'number' && progress.page > 0
+        ? progress.page - 1
+        : 0);
+    if (
+      typeof currentIdx === 'number' &&
+      !Number.isNaN(currentIdx) &&
+      currentIdx !== currentPageIndex
+    ) {
+      setCurrentPageIndex(currentIdx);
+    }
+  }, [progress, isFixedLayout, currentPageIndex, setCurrentPageIndex]);
+
+  // 2. Track page / section index from Foliate relocate events as immediate fallback
   useEffect(() => {
     if (!view) return;
     const handleRelocate = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (!detail) return;
-      const index =
-        typeof detail.index === 'number'
-          ? detail.index
-          : typeof detail.page === 'number'
-            ? detail.page - 1
-            : currentPageIndex;
-      setCurrentPageIndex(index);
+      let index: number | undefined;
+      if (typeof detail.index === 'number') {
+        index = detail.index;
+      } else if (isFixedLayout && detail.section && typeof detail.section.current === 'number') {
+        index = detail.section.current;
+      } else if (detail.location && typeof detail.location.current === 'number') {
+        index = detail.location.current;
+      } else if (detail.section && typeof detail.section.current === 'number') {
+        index = detail.section.current;
+      } else if (typeof detail.page === 'number') {
+        index = detail.page - 1;
+      }
+      if (typeof index === 'number' && !Number.isNaN(index) && index !== currentPageIndex) {
+        setCurrentPageIndex(index);
+      }
     };
 
     view.addEventListener('relocate', handleRelocate);
     return () => {
       view.removeEventListener('relocate', handleRelocate);
     };
-  }, [view, currentPageIndex, setCurrentPageIndex]);
+  }, [view, isFixedLayout, currentPageIndex, setCurrentPageIndex]);
+
+  // 3. Clear active drawing canvas buffer when changing pages
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
+    }
+    currentStrokePoints.current = [];
+    isDrawing.current = false;
+  }, [currentPageIndex, dimensions.width, dimensions.height]);
 
   // Keep dimensions synced with container
   useEffect(() => {
@@ -117,7 +160,13 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
           const updated = getPageStrokes(bookHash, currentPageIndex).filter(
             (s) => s.id !== stroke.id,
           );
-          persistPageHandwriting(bookKey, bookHash, currentPageIndex, updated);
+          persistPageHandwriting(
+            bookKey,
+            bookHash,
+            currentPageIndex,
+            updated,
+            progress?.location,
+          );
           break;
         }
       }
@@ -129,6 +178,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       dimensions,
       eraserRadius,
       getPageStrokes,
+      progress?.location,
       removeStroke,
     ],
   );
@@ -294,6 +344,26 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     const activeColor =
       currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
 
+    // Extract underlying text anchor if book has extractable text (EPUB / text PDF)
+    const textAnchor = extractTextAnchorForStroke(
+      view,
+      {
+        id: '',
+        tool: currentTool,
+        shapeType: currentTool === 'shape' ? currentShape : undefined,
+        color: activeColor,
+        width: currentWidth,
+        opacity: currentOpacity,
+        points: currentStrokePoints.current,
+        pageIndex: currentPageIndex,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+      dimensions.width,
+      dimensions.height,
+      containerRef.current?.getBoundingClientRect(),
+    );
+
     const newStroke: HandwritingStroke = {
       id: uniqueId(),
       tool: currentTool,
@@ -303,6 +373,8 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       opacity: currentOpacity,
       points: [...points],
       pageIndex: currentPageIndex,
+      cfi: textAnchor?.cfi || progress?.location,
+      textAnchor,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -312,7 +384,13 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
 
     // Persist immediately
     const updatedStrokes = [...getPageStrokes(bookHash, currentPageIndex)];
-    persistPageHandwriting(bookKey, bookHash, currentPageIndex, updatedStrokes);
+    persistPageHandwriting(
+      bookKey,
+      bookHash,
+      currentPageIndex,
+      updatedStrokes,
+      textAnchor?.cfi || progress?.location,
+    );
 
     // Clear active drawing canvas
     if (canvas) {

@@ -8,6 +8,7 @@ import {
   strokeToSvgPath,
   strokesToSvg,
   importBookFromJson,
+  extractTextAnchorForStroke,
 } from '@/utils/handwriting';
 import { HandwritingStroke } from '@/types/handwriting';
 
@@ -241,4 +242,79 @@ describe('Handwriting Utils', () => {
       expect(importBookFromJson('null')).toBeNull();
     });
   });
+
+  describe('extractTextAnchorForStroke', () => {
+    test('extracts text snippet and CFI when stroke overlaps document text', () => {
+      const doc = document.implementation.createHTMLDocument('test');
+      const p = doc.createElement('p');
+      p.textContent = 'This is a chapter about digital handwriting in InkSpire.';
+      doc.body.appendChild(p);
+
+      const textNode = p.firstChild as Text;
+      // Mock caretPositionFromPoint on document
+      (doc as unknown as { caretPositionFromPoint: unknown }).caretPositionFromPoint = () => ({
+        offsetNode: textNode,
+        offset: 10,
+      });
+
+      const mockView = {
+        renderer: {
+          getContents: () => [{ doc, index: 2 }],
+        },
+        getCFI: (_sec: number, _range: Range) => 'epubcfi(/6/4[chap2]!/4/2)',
+      };
+
+      const stroke: HandwritingStroke = {
+        id: 's-anchor',
+        tool: 'pen',
+        color: '#000000',
+        width: 3,
+        opacity: 1,
+        pageIndex: 2,
+        createdAt: 1000,
+        updatedAt: 1000,
+        points: [
+          { x: 0.2, y: 0.3 },
+          { x: 0.4, y: 0.3 },
+        ],
+      };
+
+      const anchor = extractTextAnchorForStroke(
+        mockView,
+        stroke,
+        1000,
+        1000,
+        { left: 0, top: 0, width: 1000, height: 1000 },
+      );
+
+      expect(anchor).toBeDefined();
+      expect(anchor?.textSnippet).toContain('digital handwriting');
+      expect(anchor?.cfi).toBe('epubcfi(/6/4[chap2]!/4/2)');
+      expect(anchor?.sectionIndex).toBe(2);
+    });
+
+    test('returns undefined when stroke does not overlap text or view has no contents', () => {
+      const stroke: HandwritingStroke = {
+        id: 's-empty',
+        tool: 'pen',
+        color: '#000000',
+        width: 3,
+        opacity: 1,
+        pageIndex: 0,
+        createdAt: 1000,
+        updatedAt: 1000,
+        points: [{ x: 0.5, y: 0.5 }],
+      };
+
+      const emptyView = {
+        renderer: {
+          getContents: () => [],
+        },
+      };
+
+      expect(extractTextAnchorForStroke(emptyView, stroke, 800, 1200)).toBeUndefined();
+      expect(extractTextAnchorForStroke(null, stroke, 800, 1200)).toBeUndefined();
+    });
+  });
 });
+

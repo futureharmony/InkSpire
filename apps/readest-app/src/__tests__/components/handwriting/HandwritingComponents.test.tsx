@@ -176,5 +176,77 @@ describe('Handwriting UI Components', () => {
       expect(path).toBeDefined();
       expect(path?.getAttribute('stroke')).toBe('#ff0000');
     });
+
+    it('isolates strokes across pages: page 5 strokes do not show on page 6 and return on page 5', () => {
+      const bookHash = bookKey.split('-')[0]!;
+
+      // Add stroke to page 5 (0-indexed pageIndex = 4)
+      useHandwritingStore.getState().addStroke(bookHash, 4, {
+        id: 'stroke-page-5',
+        tool: 'pen',
+        color: '#2563eb',
+        width: 3,
+        opacity: 1,
+        pageIndex: 4,
+        createdAt: 1000,
+        updatedAt: 1000,
+        points: [{ x: 0.2, y: 0.2 }, { x: 0.3, y: 0.3 }],
+      });
+
+      // Add stroke to page 6 (0-indexed pageIndex = 5)
+      useHandwritingStore.getState().addStroke(bookHash, 5, {
+        id: 'stroke-page-6',
+        tool: 'pen',
+        color: '#dc2626',
+        width: 3,
+        opacity: 1,
+        pageIndex: 5,
+        createdAt: 2000,
+        updatedAt: 2000,
+        points: [{ x: 0.5, y: 0.5 }, { x: 0.6, y: 0.6 }],
+      });
+
+      // 1. Start at Page 5 (pageIndex = 4)
+      useHandwritingStore.getState().setCurrentPageIndex(4);
+      const { container, rerender } = render(
+        <HandwritingLayer
+          bookKey={bookKey}
+          contentInsets={{ top: 0, right: 0, bottom: 0, left: 0 }}
+        />,
+      );
+
+      // Verify page 5 stroke is visible and page 6 stroke is NOT visible
+      let paths = container.querySelectorAll('svg path');
+      expect(paths.length).toBe(1);
+      expect(paths[0]?.getAttribute('stroke')).toBe('#2563eb');
+
+      // 2. Turn to Page 6 (pageIndex = 5)
+      useHandwritingStore.getState().setCurrentPageIndex(5);
+      rerender(
+        <HandwritingLayer
+          bookKey={bookKey}
+          contentInsets={{ top: 0, right: 0, bottom: 0, left: 0 }}
+        />,
+      );
+
+      // Verify page 6 stroke is visible, page 5 stroke has disappeared
+      paths = container.querySelectorAll('svg path');
+      expect(paths.length).toBe(1);
+      expect(paths[0]?.getAttribute('stroke')).toBe('#dc2626');
+
+      // 3. Turn back to Page 5 (pageIndex = 4)
+      useHandwritingStore.getState().setCurrentPageIndex(4);
+      rerender(
+        <HandwritingLayer
+          bookKey={bookKey}
+          contentInsets={{ top: 0, right: 0, bottom: 0, left: 0 }}
+        />,
+      );
+
+      // Verify page 5 stroke returns intact
+      paths = container.querySelectorAll('svg path');
+      expect(paths.length).toBe(1);
+      expect(paths[0]?.getAttribute('stroke')).toBe('#2563eb');
+    });
   });
 });

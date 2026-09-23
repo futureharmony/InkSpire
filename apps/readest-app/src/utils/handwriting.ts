@@ -1,7 +1,13 @@
 import {
   HandwritingPoint,
   HandwritingStroke,
+  HandwritingTextAnchor,
 } from '@/types/handwriting';
+import {
+  getCaretPointFromPoint,
+  getWordRangeFromPoint,
+  getRangeRectInWebview,
+} from '@/utils/sel';
 
 /** Standard reference width for stroke sizing */
 export const REFERENCE_WIDTH = 1000;
@@ -689,3 +695,154 @@ function createSimpleImagePdf(
 
   return new Blob(parts, { type: 'application/pdf' });
 }
+
+/**
+ * Extracts underlying text anchor (snippet, CFI, section, normalized rect)
+ * for a stroke by hit-testing into rendered document contents.
+ */
+export function extractTextAnchorForStroke(
+  view: unknown,
+  stroke: HandwritingStroke,
+  containerWidth: number,
+  containerHeight: number,
+  containerRect?: { left: number; top: number; width: number; height: number } | null,
+): HandwritingTextAnchor | undefined {
+  if (!view || !stroke.points || stroke.points.length === 0) return undefined;
+
+  const foliateView = view as {
+    renderer?: {
+      getContents?: () => Array<{ doc: Document; index: number }>;
+    };
+    getCFI?: (sectionIndex: number, range: Range) => string;
+  };
+
+  const getContents = foliateView.renderer?.getContents;
+  if (typeof getContents !== 'function') return undefined;
+
+  const contents = getContents.call(foliateView.renderer);
+  if (!Array.isArray(contents) || contents.length === 0) return undefined;
+
+  const cLeft = containerRect?.left ?? 0;
+  const cTop = containerRect?.top ?? 0;
+
+  // Compute bounding box and center
+  let minX = 1;
+  let maxX = 0;
+  let minY = 1;
+  let maxY = 0;
+  for (const p of stroke.points) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+
+  // Sample points to probe: Center, Start, and End
+  const samplePoints: Array<{ x: number; y: number }> = [
+    { x: cLeft + centerX * containerWidth, y: cTop + centerY * containerHeight },
+    {
+      x: cLeft + stroke.points[0]!.x * containerWidth,
+      y: cTop + stroke.points[0]!.y * containerHeight,
+    },
+    {
+      x: cLeft + stroke.points[stroke.points.length - 1]!.x * containerWidth,
+      y: cTop + stroke.points[stroke.points.length - 1]!.y * containerHeight,
+    },
+  ];
+
+  for (const sample of samplePoints) {
+    for (const item of contents) {
+      const { doc, index: sectionIndex } = item;
+      if (!doc) continue;
+
+      const frame = doc.defaultView?.frameElement?.getBoundingClientRect();
+      if (
+        frame &&
+        (sample.x < frame.left ||
+          sample.x > frame.right ||
+          sample.y < frame.top ||
+          sample.y > frame.bottom)
+      ) {
+        continue;
+      }
+
+      const docX = sample.x - (frame?.left ?? 0);
+      const docY = sample.y - (frame?.top ?? 0);
+
+      try {
+        let range: Range | null = null;
+
+        // Try getting word range from point
+        range = getWordRangeFromPoint(doc, docX, docY);
+
+        if (!range) {
+          const caret = getCaretPointFromPoint(doc, docX, docY);
+          if (caret?.node && caret.node.nodeType === Node.TEXT_NODE) {
+            range = doc.createRange();
+            const textNode = caret.node as Text;
+            const start = Math.max(0, caret.offset - 15);
+            const end = Math.min(textNode.length, caret.offset + 25);
+            range.setStart(textNode, start);
+            range.setEnd(textNode, end);
+          }
+        }
+
+        if (range) {
+          const text = range.toString().trim();
+          if (text.length > 0) {
+            let snippet = text;
+            const containerNode = range.commonAncestorContainer;
+            if (snippet.length < 20 && containerNode.textContent) {
+              const fullText = containerNode.textContent.trim();
+              if (fullText.length > 0) {
+                snippet = fullText.slice(0, 80);
+              }
+            } else if (snippet.length > 80) {
+              snippet = snippet.slice(0, 80);
+            }
+
+            let cfi: string | undefined;
+            if (typeof foliateView.getCFI === 'function') {
+              try {
+                cfi = foliateView.getCFI(sectionIndex, range);
+              } catch {
+                // ignore
+              }
+            }
+
+            let boundingRect:
+              | { left: number; top: number; right: number; bottom: number }
+              | undefined;
+            try {
+              const rangeRect = getRangeRectInWebview(range);
+              if (rangeRect) {
+                boundingRect = {
+                  left: Math.max(0, Math.min(1, (rangeRect.left - cLeft) / containerWidth)),
+                  top: Math.max(0, Math.min(1, (rangeRect.top - cTop) / containerHeight)),
+                  right: Math.max(0, Math.min(1, (rangeRect.right - cLeft) / containerWidth)),
+                  bottom: Math.max(0, Math.min(1, (rangeRect.bottom - cTop) / containerHeight)),
+                };
+              }
+            } catch {
+              // ignore rect calculation in environments lacking full layout
+            }
+
+            return {
+              textSnippet: snippet,
+              cfi,
+              sectionIndex,
+              boundingRect,
+            };
+          }
+        }
+      } catch {
+        // hit testing in cross-origin / detached doc failed
+      }
+    }
+  }
+
+  return undefined;
+}
+

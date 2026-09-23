@@ -15,6 +15,22 @@ export interface HandwritingPoint {
   time?: number;
 }
 
+export interface HandwritingTextAnchor {
+  /** The text snippet underlying or closest to the stroke (e.g. 1-100 characters) */
+  textSnippet: string;
+  /** Canonical CFI pointing directly to the anchor text range (if available) */
+  cfi?: string;
+  /** Section / spine index in the book */
+  sectionIndex?: number;
+  /** Normalized bounding rect of the text in view (0..1) */
+  boundingRect?: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  };
+}
+
 export interface HandwritingStroke {
   id: string;
   tool: HandwritingTool;
@@ -29,6 +45,8 @@ export interface HandwritingStroke {
   pageIndex: number;
   /** Canonical CFI if available */
   cfi?: string;
+  /** Extra association with underlying text if parseable */
+  textAnchor?: HandwritingTextAnchor;
   createdAt: number;
   updatedAt: number;
 }

@@ -124,4 +124,42 @@ describe('Handwriting Service', () => {
     expect(merged.length).toBe(1);
     expect(merged[0]?.deletedAt).toBeDefined();
   });
+
+  test('embeds textAnchor snippet and cfi into BookNote', () => {
+    const strokeWithAnchor: HandwritingStroke = {
+      ...sampleStroke,
+      id: 's-anchor',
+      pageIndex: 4, // Page 5
+      textAnchor: {
+        textSnippet: 'Important concept on artificial intelligence',
+        cfi: 'epubcfi(/6/12[c5]!/4/2/1:10)',
+        sectionIndex: 3,
+      },
+    };
+
+    const merged = mergeHandwritingIntoBooknotes('book-ai', 4, [strokeWithAnchor], []);
+
+    expect(merged.length).toBe(1);
+    const note = merged[0]!;
+    expect(note.page).toBe(5); // 1-based page 5
+    expect(note.cfi).toBe('epubcfi(/6/12[c5]!/4/2/1:10)');
+    expect(note.text).toContain('Important concept on artificial intelligence');
+  });
+
+  test('keeps page 5 and page 6 handwriting notes distinct in booknotes array', () => {
+    const strokeP5: HandwritingStroke = { ...sampleStroke, id: 's-p5', pageIndex: 4 };
+    const strokeP6: HandwritingStroke = { ...sampleStroke, id: 's-p6', pageIndex: 5 };
+
+    let booknotes: BookNote[] = [];
+    booknotes = mergeHandwritingIntoBooknotes('book-1', 4, [strokeP5], booknotes);
+    booknotes = mergeHandwritingIntoBooknotes('book-1', 5, [strokeP6], booknotes);
+
+    expect(booknotes.length).toBe(2);
+
+    const extracted = extractHandwritingFromBooknotes(booknotes);
+    expect(extracted[4]?.length).toBe(1);
+    expect(extracted[4]?.[0]?.id).toBe('s-p5');
+    expect(extracted[5]?.length).toBe(1);
+    expect(extracted[5]?.[0]?.id).toBe('s-p6');
+  });
 });

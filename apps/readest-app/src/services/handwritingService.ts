@@ -100,14 +100,26 @@ export function mergeHandwritingIntoBooknotes(
     (n) => n.id === noteId || (n.type === 'handwriting' && n.page === pageIndex + 1),
   );
 
+  const snippets = strokes
+    .map((s) => s.textAnchor?.textSnippet?.trim())
+    .filter(Boolean);
+  const snippetPreview =
+    snippets.length > 0 ? `: "${snippets[0]!.slice(0, 80)}"` : '';
+
+  const effectiveCfi =
+    cfi ||
+    strokes.find((s) => s.cfi)?.cfi ||
+    strokes.find((s) => s.textAnchor?.cfi)?.textAnchor?.cfi ||
+    `epubcfi(/6/2[page-${pageIndex + 1}]!/4)`;
+
   const updatedNote: BookNote = {
     id: noteId,
     type: 'handwriting',
     bookHash,
     page: pageIndex + 1,
-    cfi: cfi || `epubcfi(/6/2[page-${pageIndex + 1}]!/4)`,
+    cfi: effectiveCfi,
     note: notePayload,
-    text: `[Handwriting Note: Page ${pageIndex + 1} (${strokes.length} strokes)]`,
+    text: `[Handwriting Note: Page ${pageIndex + 1} (${strokes.length} strokes)${snippetPreview}]`,
     createdAt: existingIndex >= 0 ? existingBooknotes[existingIndex]!.createdAt : now,
     updatedAt: now,
   };

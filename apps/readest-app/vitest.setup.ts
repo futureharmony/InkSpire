@@ -2,6 +2,13 @@
 // functional implementation. The stub is missing `clear`, `setItem`, etc.,
 // which breaks tests that depend on localStorage. Replace it with an in-memory
 // shim whenever the native object isn't fully functional.
+if (!process.env['NEXT_PUBLIC_DEFAULT_SUPABASE_URL_BASE64']) {
+  process.env['NEXT_PUBLIC_DEFAULT_SUPABASE_URL_BASE64'] = btoa('https://dummy.supabase.co');
+}
+if (!process.env['NEXT_PUBLIC_DEFAULT_SUPABASE_KEY_BASE64']) {
+  process.env['NEXT_PUBLIC_DEFAULT_SUPABASE_KEY_BASE64'] = btoa('dummy-anon-key');
+}
+
 if (
   typeof globalThis.localStorage === 'undefined' ||
   typeof globalThis.localStorage?.clear !== 'function'
