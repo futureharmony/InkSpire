@@ -1,5 +1,5 @@
 import { BookNote } from '@/types/book';
-import { HandwritingStroke, HandwritingBookData } from '@/types/handwriting';
+import { HandwritingStroke, HandwritingBookData, HandwritingStickyNote } from '@/types/handwriting';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useHandwritingStore } from '@/store/handwritingStore';
 
@@ -10,33 +10,42 @@ export function getHandwritingStorageKey(bookHash: string): string {
   return `${LOCAL_STORAGE_PREFIX}${bookHash}`;
 }
 
-/** Load handwriting strokes from localStorage cache */
+/** Load handwriting strokes and sticky notes from localStorage cache */
 export function loadHandwritingFromLocal(
   bookHash: string,
-): Record<number, HandwritingStroke[]> {
-  if (typeof window === 'undefined') return {};
+): {
+  pages: Record<number, HandwritingStroke[]>;
+  stickyNotes: Record<number, HandwritingStickyNote[]>;
+} {
+  if (typeof window === 'undefined') return { pages: {}, stickyNotes: {} };
   try {
     const raw = localStorage.getItem(getHandwritingStorageKey(bookHash));
-    if (!raw) return {};
+    if (!raw) return { pages: {}, stickyNotes: {} };
     const parsed = JSON.parse(raw) as HandwritingBookData;
-    return parsed?.pages || {};
+    return {
+      pages: parsed?.pages || {},
+      stickyNotes: parsed?.stickyNotes || {},
+    };
   } catch (e) {
     console.warn('[HandwritingService] Failed to load from localStorage:', e);
-    return {};
+    return { pages: {}, stickyNotes: {} };
   }
 }
 
-/** Save handwriting strokes to localStorage cache */
+/** Save handwriting strokes and sticky notes to localStorage cache */
 export function saveHandwritingToLocal(
   bookHash: string,
   pages: Record<number, HandwritingStroke[]>,
+  stickyNotes?: Record<number, HandwritingStickyNote[]>,
 ): void {
   if (typeof window === 'undefined') return;
   try {
+    const current = loadHandwritingFromLocal(bookHash);
     const data: HandwritingBookData = {
       version: 1,
       bookHash,
       pages,
+      stickyNotes: stickyNotes || current.stickyNotes || {},
       updatedAt: Date.now(),
     };
     localStorage.setItem(getHandwritingStorageKey(bookHash), JSON.stringify(data));
@@ -140,12 +149,31 @@ export function initBookHandwriting(bookKey: string, bookHash: string): void {
   const fromLocal = loadHandwritingFromLocal(bookHash);
 
   // Merge: prefer newer or combined
-  const merged: Record<number, HandwritingStroke[]> = {
+  const mergedStrokes: Record<number, HandwritingStroke[]> = {
     ...fromNotes,
-    ...fromLocal,
+    ...fromLocal.pages,
   };
 
-  useHandwritingStore.getState().loadBookStrokes(bookHash, merged);
+  useHandwritingStore.getState().loadBookStrokes(bookHash, mergedStrokes);
+  if (fromLocal.stickyNotes) {
+    useHandwritingStore.getState().loadBookStickyNotes(bookHash, fromLocal.stickyNotes);
+  }
+}
+
+/** Commit page sticky notes changes to local storage cache */
+export function persistPageStickyNotes(
+  bookHash: string,
+  pageIndex: number,
+  notes: HandwritingStickyNote[],
+): void {
+  const store = useHandwritingStore.getState();
+  const allStrokes = store.bookStrokes[bookHash] || {};
+  const allNotes = store.stickyNotes[bookHash] || {};
+  const updatedNotes = {
+    ...allNotes,
+    [pageIndex]: notes,
+  };
+  saveHandwritingToLocal(bookHash, allStrokes, updatedNotes);
 }
 
 /** Commit page handwriting changes to both localStorage and booknotes */

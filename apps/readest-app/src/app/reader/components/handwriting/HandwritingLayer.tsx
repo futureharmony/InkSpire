@@ -8,6 +8,7 @@ import { Insets } from '@/types/misc';
 import {
   HandwritingPoint,
   HandwritingStroke,
+  HandwritingStickyNote,
 } from '@/types/handwriting';
 import {
   fromNormalizedPoint,
@@ -24,8 +25,12 @@ import {
 import {
   initBookHandwriting,
   persistPageHandwriting,
+  persistPageStickyNotes,
 } from '@/services/handwritingService';
+import { extractTextFromStroke, ExtractedTextResult } from '@/utils/lassoTextSelector';
 import HandwritingToolbar from './HandwritingToolbar';
+import { StickyNoteCard } from './StickyNoteCard';
+import { LassoActionMenu } from './LassoActionMenu';
 import { uniqueId } from '@/utils/misc';
 
 interface HandwritingLayerProps {
@@ -43,12 +48,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   const isDrawing = useRef(false);
   const touchStartPos = useRef<{ x: number; y: number; time: number } | null>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 1200 });
-
-  // Swipe gesture & page turn animation state
-  const [dragOffset, setDragOffset] = useState<number>(0);
-  const [isAnimatingPageTurn, setIsAnimatingPageTurn] = useState<boolean>(false);
-  const prevPageIndexRef = useRef<number | null>(null);
-  const [pageTurnAnimClass, setPageTurnAnimClass] = useState<string>('');
+  const [lassoSelection, setLassoSelection] = useState<ExtractedTextResult | null>(null);
 
   const bookHash = bookKey.split('-')[0]!;
   const view = useReaderStore((s) => s.getView(bookKey));
@@ -73,6 +73,8 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     removeStroke,
     setPageStrokes,
     getPageStrokes,
+    addStickyNote,
+    getStickyNotes,
   } = useHandwritingStore();
 
   const isActive = activeBookKey === bookKey;
@@ -129,29 +131,6 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       view.removeEventListener('relocate', handleRelocate);
     };
   }, [view, isFixedLayout, currentPageIndex, setCurrentPageIndex]);
-
-  const isGestureTurnRef = useRef(false);
-
-  // Animate notes sliding in when page changes externally
-  useEffect(() => {
-    let timer: NodeJS.Timeout | undefined;
-    if (prevPageIndexRef.current !== null && prevPageIndexRef.current !== currentPageIndex) {
-      if (!isGestureTurnRef.current && dragOffset === 0 && !isAnimatingPageTurn) {
-        const isForward = currentPageIndex > prevPageIndexRef.current;
-        setPageTurnAnimClass(
-          isForward
-            ? 'animate-in fade-in slide-in-from-right-8 duration-200'
-            : 'animate-in fade-in slide-in-from-left-8 duration-200',
-        );
-        timer = setTimeout(() => setPageTurnAnimClass(''), 220);
-      }
-      isGestureTurnRef.current = false;
-    }
-    prevPageIndexRef.current = currentPageIndex;
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
-  }, [currentPageIndex, dragOffset, isAnimatingPageTurn]);
 
   // Clear active drawing canvas buffer when changing pages
   useEffect(() => {
@@ -251,6 +230,11 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isActive) return;
 
+    // Dismiss existing lasso selection on new interaction
+    if (lassoSelection) {
+      setLassoSelection(null);
+    }
+
     // Palm rejection: if stylusOnly is true, track touch for gestures, don't draw
     if (stylusOnly && e.pointerType === 'touch') {
       touchStartPos.current = { x: e.clientX, y: e.clientY, time: Date.now() };
@@ -290,6 +274,10 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     if (!ctx) return;
     ctx.clearRect(0, 0, dimensions.width, dimensions.height);
 
+    if (currentTool === 'lasso') {
+      return;
+    }
+
     const activeColor =
       currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
 
@@ -311,13 +299,8 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isActive) return;
 
-    // Touch gesture tracking for smooth swipe pagination
-    if (stylusOnly && e.pointerType === 'touch' && touchStartPos.current) {
-      const dx = e.clientX - touchStartPos.current.x;
-      const dy = e.clientY - touchStartPos.current.y;
-      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
-        setDragOffset(dx);
-      }
+    if (stylusOnly && e.pointerType === 'touch') {
+      // Track touch for swipe gesture, no drawing
       return;
     }
 
@@ -344,6 +327,22 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
 
     ctx.clearRect(0, 0, dimensions.width, dimensions.height);
 
+    if (currentTool === 'lasso') {
+      ctx.save();
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      for (let i = 0; i < currentStrokePoints.current.length; i++) {
+        const p = fromNormalizedPoint(currentStrokePoints.current[i]!, dimensions.width, dimensions.height);
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+      }
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
     const activeColor =
       currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
 
@@ -365,7 +364,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   const finishDrawing = (e?: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isActive) return;
 
-    // Handle touch swipe gesture when stylusOnly is active
+    // Handle touch swipe & tap gesture when stylusOnly is active
     if (stylusOnly && e?.pointerType === 'touch' && touchStartPos.current) {
       try {
         if (e && canvasRef.current?.hasPointerCapture(e.pointerId)) {
@@ -379,37 +378,17 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       const duration = Date.now() - touchStartPos.current.time;
       touchStartPos.current = null;
 
-      // Swipe detected: smoothly animate notes sliding out and new notes sliding in
-      if (duration < 700 && Math.abs(deltaY) < 150) {
+      if (duration < 800 && Math.abs(deltaY) < 160) {
         if (deltaX < -50) {
-          // Slide out to left -> turn forward
-          const targetPage = currentPageIndex + 1;
-          isGestureTurnRef.current = true;
-          setIsAnimatingPageTurn(true);
-          setDragOffset(-dimensions.width);
+          // Native Foliate turn forward (page index synced by relocate)
           view?.next();
-          setTimeout(() => {
-            setCurrentPageIndex(targetPage);
-            setDragOffset(0);
-            setIsAnimatingPageTurn(false);
-          }, 300);
           return;
         } else if (deltaX > 50) {
-          // Slide out to right -> turn backward
-          const targetPage = Math.max(0, currentPageIndex - 1);
-          isGestureTurnRef.current = true;
-          setIsAnimatingPageTurn(true);
-          setDragOffset(dimensions.width);
+          // Native Foliate turn backward (page index synced by relocate)
           view?.prev();
-          setTimeout(() => {
-            setCurrentPageIndex(targetPage);
-            setDragOffset(0);
-            setIsAnimatingPageTurn(false);
-          }, 300);
           return;
-        } else if (Math.abs(deltaX) < 25) {
-          // Tap on center toggles navigation; margin taps are blocked
-          setDragOffset(0);
+        } else if (Math.abs(deltaX) < 25 && Math.abs(deltaY) < 25) {
+          // Tap: block margin tap turn; only center tap toggles navigation
           const rect = canvasRef.current?.getBoundingClientRect();
           if (rect) {
             const relX = (e.clientX - rect.left) / rect.width;
@@ -420,13 +399,6 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
           }
           return;
         }
-      }
-
-      // If swipe threshold was not met, spring smoothly back to 0
-      if (dragOffset !== 0) {
-        setIsAnimatingPageTurn(true);
-        setDragOffset(0);
-        setTimeout(() => setIsAnimatingPageTurn(false), 240);
       }
       return;
     }
@@ -450,6 +422,27 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
 
     const points = currentStrokePoints.current;
     if (points.length === 0) return;
+
+    // Lasso text selection mode: inspect underlying text and summon menu
+    if (currentTool === 'lasso') {
+      const pts = [...points];
+      currentStrokePoints.current = [];
+      const ctx = canvas?.getContext('2d');
+      ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
+
+      if (pts.length > 2) {
+        const extracted = extractTextFromStroke(
+          pts,
+          dimensions.width,
+          dimensions.height,
+          view,
+        );
+        if (extracted && extracted.text.trim().length > 0) {
+          setLassoSelection(extracted);
+        }
+      }
+      return;
+    }
 
     const activeColor =
       currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
@@ -503,6 +496,59 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     currentStrokePoints.current = [];
     const ctx = canvas?.getContext('2d');
     ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
+  };
+
+  const handleCreateStickyNote = (text: string, x: number, y: number) => {
+    const newNote: HandwritingStickyNote = {
+      id: uniqueId(),
+      bookHash,
+      pageIndex: currentPageIndex,
+      x: Math.max(0.05, Math.min(0.75, x)),
+      y: Math.max(0.05, Math.min(0.75, y)),
+      color: 'yellow',
+      content: '',
+      selectedText: text,
+      isPinned: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    addStickyNote(bookHash, currentPageIndex, newNote);
+    persistPageStickyNotes(bookHash, currentPageIndex, [
+      ...getStickyNotes(bookHash, currentPageIndex),
+      newNote,
+    ]);
+    setLassoSelection(null);
+  };
+
+  const handleHighlightText = (_text: string) => {
+    if (!lassoSelection) return;
+    const b = lassoSelection.boundingRect;
+    const midY = (b.top + b.bottom) / 2;
+    const highlightStroke: HandwritingStroke = {
+      id: uniqueId(),
+      tool: 'highlighter',
+      color: '#facc15',
+      width: 14,
+      opacity: 0.35,
+      points: [
+        { x: b.left, y: midY, pressure: 0.8 },
+        { x: b.right, y: midY, pressure: 0.8 },
+      ],
+      pageIndex: currentPageIndex,
+      cfi: progress?.location,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    addStroke(bookHash, currentPageIndex, highlightStroke);
+    const updated = [...getPageStrokes(bookHash, currentPageIndex), highlightStroke];
+    persistPageHandwriting(
+      bookKey,
+      bookHash,
+      currentPageIndex,
+      updated,
+      progress?.location,
+    );
+    setLassoSelection(null);
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -708,65 +754,41 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
         paddingLeft: contentInsets.left,
       }}
     >
-      {/* 1. Animated SVG Layer: Slides seamlessly when swiping or turning pages */}
-      <div
-        className={`absolute inset-0 pointer-events-none ${pageTurnAnimClass}`}
-        style={{
-          transform: dragOffset !== 0 ? `translateX(${dragOffset}px)` : undefined,
-          transition: isAnimatingPageTurn
-            ? 'transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94)'
-            : 'none',
-        }}
+      {/* 1. Synchronized SVG Layer for current page strokes */}
+      <svg
+        className='absolute inset-0 w-full h-full pointer-events-none'
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio='none'
       >
-        {/* Current page strokes */}
-        <svg
-          className='absolute inset-0 w-full h-full pointer-events-none'
-          viewBox={`0 0 ${width} ${height}`}
-          preserveAspectRatio='none'
-        >
-          {svgDefs}
-          {renderStrokes(currentStrokes, 'curr')}
-        </svg>
+        {svgDefs}
+        {renderStrokes(currentStrokes, 'curr')}
+      </svg>
 
-        {/* Next page preview while dragging or animating forward to the left (dragOffset < 0) */}
-        {dragOffset < 0 && (
-          <div
-            className='absolute inset-0 pointer-events-none'
-            style={{ transform: `translateX(${width}px)` }}
-          >
-            <svg
-              className='absolute inset-0 w-full h-full pointer-events-none'
-              viewBox={`0 0 ${width} ${height}`}
-              preserveAspectRatio='none'
-            >
-              {svgDefs}
-              {renderStrokes(getPageStrokes(bookHash, currentPageIndex + 1), 'next')}
-            </svg>
-          </div>
-        )}
+      {/* 2. Interactive Sticky Notes */}
+      {getStickyNotes(bookHash, currentPageIndex).map((note) => (
+        <StickyNoteCard
+          key={note.id}
+          note={note}
+          containerWidth={width}
+          containerHeight={height}
+          bookHash={bookHash}
+          pageIndex={currentPageIndex}
+        />
+      ))}
 
-        {/* Previous page preview while dragging or animating backward to the right (dragOffset > 0) */}
-        {dragOffset > 0 && (
-          <div
-            className='absolute inset-0 pointer-events-none'
-            style={{ transform: `translateX(${-width}px)` }}
-          >
-            <svg
-              className='absolute inset-0 w-full h-full pointer-events-none'
-              viewBox={`0 0 ${width} ${height}`}
-              preserveAspectRatio='none'
-            >
-              {svgDefs}
-              {renderStrokes(
-                getPageStrokes(bookHash, Math.max(0, currentPageIndex - 1)),
-                'prev',
-              )}
-            </svg>
-          </div>
-        )}
-      </div>
+      {/* 3. Lasso Action Menu for Selected Text */}
+      {lassoSelection && (
+        <LassoActionMenu
+          selection={lassoSelection}
+          containerWidth={width}
+          containerHeight={height}
+          onCreateStickyNote={handleCreateStickyNote}
+          onHighlightText={handleHighlightText}
+          onClose={() => setLassoSelection(null)}
+        />
+      )}
 
-      {/* 2. Zero-latency active drawing canvas layer (only interactive when active) */}
+      {/* 4. Active drawing canvas layer */}
       <canvas
         ref={canvasRef}
         width={width}
@@ -782,7 +804,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
         onPointerCancel={handlePointerCancel}
       />
 
-      {/* 3. Floating Handwriting Toolbar */}
+      {/* 5. Floating Handwriting Toolbar */}
       <HandwritingToolbar
         bookKey={bookKey}
         containerWidth={width}

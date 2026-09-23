@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   HandwritingEraserType,
   HandwritingShapeType,
+  HandwritingStickyNote,
   HandwritingStroke,
   HandwritingTool,
 } from '@/types/handwriting';
@@ -23,6 +24,10 @@ interface HandwritingState {
   /** Map of bookHash -> pageIndex -> strokes */
   bookStrokes: Record<string, Record<number, HandwritingStroke[]>>;
 
+  /** Map of bookHash -> pageIndex -> sticky notes */
+  stickyNotes: Record<string, Record<number, HandwritingStickyNote[]>>;
+  activeStickyNoteId: string | null;
+
   /** Undo history: key = `${bookHash}_${pageIndex}` */
   undoStacks: Record<string, HandwritingStroke[][]>;
   /** Redo history: key = `${bookHash}_${pageIndex}` */
@@ -43,6 +48,13 @@ interface HandwritingState {
   removeStroke: (bookHash: string, pageIndex: number, strokeId: string) => void;
   setPageStrokes: (bookHash: string, pageIndex: number, strokes: HandwritingStroke[]) => void;
   clearPage: (bookHash: string, pageIndex: number) => void;
+
+  addStickyNote: (bookHash: string, pageIndex: number, note: HandwritingStickyNote) => void;
+  updateStickyNote: (bookHash: string, pageIndex: number, noteId: string, partial: Partial<HandwritingStickyNote>) => void;
+  removeStickyNote: (bookHash: string, pageIndex: number, noteId: string) => void;
+  getStickyNotes: (bookHash: string, pageIndex: number) => HandwritingStickyNote[];
+  setActiveStickyNoteId: (id: string | null) => void;
+  loadBookStickyNotes: (bookHash: string, notes: Record<number, HandwritingStickyNote[]>) => void;
 
   undo: (bookHash: string, pageIndex: number) => void;
   redo: (bookHash: string, pageIndex: number) => void;
@@ -68,6 +80,8 @@ export const useHandwritingStore = create<HandwritingState>((set, get) => ({
   currentPageIndex: 0,
 
   bookStrokes: {},
+  stickyNotes: {},
+  activeStickyNoteId: null,
   undoStacks: {},
   redoStacks: {},
 
@@ -308,6 +322,88 @@ export const useHandwritingStore = create<HandwritingState>((set, get) => ({
   getPageStrokes: (bookHash: string, pageIndex: number) => {
     const pages = get().bookStrokes[bookHash];
     return (pages && pages[pageIndex]) || [];
+  },
+
+  addStickyNote: (bookHash: string, pageIndex: number, note: HandwritingStickyNote) => {
+    set((state) => {
+      const bookNotes = state.stickyNotes[bookHash] || {};
+      const pageNotes = bookNotes[pageIndex] || [];
+      return {
+        stickyNotes: {
+          ...state.stickyNotes,
+          [bookHash]: {
+            ...bookNotes,
+            [pageIndex]: [...pageNotes, note],
+          },
+        },
+        activeStickyNoteId: note.id,
+      };
+    });
+  },
+
+  updateStickyNote: (
+    bookHash: string,
+    pageIndex: number,
+    noteId: string,
+    partial: Partial<HandwritingStickyNote>,
+  ) => {
+    set((state) => {
+      const bookNotes = state.stickyNotes[bookHash] || {};
+      const pageNotes = bookNotes[pageIndex] || [];
+      return {
+        stickyNotes: {
+          ...state.stickyNotes,
+          [bookHash]: {
+            ...bookNotes,
+            [pageIndex]: pageNotes.map((n) =>
+              n.id === noteId ? { ...n, ...partial, updatedAt: Date.now() } : n,
+            ),
+          },
+        },
+      };
+    });
+  },
+
+  removeStickyNote: (bookHash: string, pageIndex: number, noteId: string) => {
+    set((state) => {
+      const bookNotes = state.stickyNotes[bookHash] || {};
+      const pageNotes = bookNotes[pageIndex] || [];
+      return {
+        stickyNotes: {
+          ...state.stickyNotes,
+          [bookHash]: {
+            ...bookNotes,
+            [pageIndex]: pageNotes.filter((n) => n.id !== noteId),
+          },
+        },
+        activeStickyNoteId:
+          state.activeStickyNoteId === noteId ? null : state.activeStickyNoteId,
+      };
+    });
+  },
+
+  getStickyNotes: (bookHash: string, pageIndex: number) => {
+    const bookNotes = get().stickyNotes[bookHash];
+    return (bookNotes && bookNotes[pageIndex]) || [];
+  },
+
+  setActiveStickyNoteId: (id: string | null) => {
+    set({ activeStickyNoteId: id });
+  },
+
+  loadBookStickyNotes: (
+    bookHash: string,
+    notes: Record<number, HandwritingStickyNote[]>,
+  ) => {
+    set((state) => ({
+      stickyNotes: {
+        ...state.stickyNotes,
+        [bookHash]: {
+          ...(state.stickyNotes[bookHash] || {}),
+          ...notes,
+        },
+      },
+    }));
   },
 
   loadBookStrokes: (bookHash: string, pages: Record<number, HandwritingStroke[]>) => {

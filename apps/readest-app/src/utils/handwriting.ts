@@ -576,19 +576,21 @@ export function strokeToCalligraphicPath(
   if (points.length === 0) return '';
 
   const strokeScale = width / REFERENCE_WIDTH;
-  const baseWidth = Math.max(1, stroke.width * strokeScale);
+  const baseWidth = Math.max(1.2, stroke.width * strokeScale);
 
   if (points.length === 1) {
     const p = points[0]!;
     const px = (p.x * width).toFixed(1);
     const py = (p.y * height).toFixed(1);
-    const r = Math.max(0.6, (baseWidth * (0.4 + 0.6 * (p.pressure ?? 0.5))) / 2).toFixed(1);
+    const r = Math.max(0.8, (baseWidth * (0.45 + 0.65 * (p.pressure ?? 0.5))) / 2).toFixed(1);
     return `M ${px} ${py} m -${r}, 0 a ${r},${r} 0 1,0 ${(Number(r) * 2).toFixed(1)},0 a ${r},${r} 0 1,0 -${(Number(r) * 2).toFixed(1)},0 Z`;
   }
 
   const n = points.length;
   const pxs = new Float32Array(n);
   const pys = new Float32Array(n);
+  const angles = new Float32Array(n);
+  const speeds = new Float32Array(n);
   const radii = new Float32Array(n);
   const leftX = new Float32Array(n);
   const leftY = new Float32Array(n);
@@ -600,46 +602,75 @@ export function strokeToCalligraphicPath(
     pys[i] = points[i]!.y * height;
   }
 
-  const NIB_ANGLE = Math.PI / 4; // 45-degree calligraphic angle
+  // 1. Calculate direction angles and speeds
+  for (let i = 0; i < n; i++) {
+    if (i === 0) {
+      angles[0] = Math.atan2(pys[1]! - pys[0]!, pxs[1]! - pxs[0]!);
+      speeds[0] = 0.2;
+    } else if (i === n - 1) {
+      angles[i] = Math.atan2(pys[n - 1]! - pys[n - 2]!, pxs[n - 1]! - pxs[n - 2]!);
+      const dist = Math.hypot(pxs[i]! - pxs[i - 1]!, pys[i]! - pys[i - 1]!);
+      const dt = Math.max(1, (points[i]!.time ?? 0) - (points[i - 1]!.time ?? 0));
+      speeds[i] = Math.min(2.5, dist / dt);
+    } else {
+      angles[i] = Math.atan2(pys[i + 1]! - pys[i - 1]!, pxs[i + 1]! - pxs[i - 1]!);
+      const dist = Math.hypot(pxs[i]! - pxs[i - 1]!, pys[i]! - pys[i - 1]!);
+      const dt = Math.max(1, (points[i]!.time ?? 0) - (points[i - 1]!.time ?? 0));
+      speeds[i] = Math.min(2.5, dist / dt);
+    }
+  }
+
+  // 2. Calligraphic Nib Dynamics for Chinese Handwriting
+  // Nib fixed angle: ~38 degrees (0.66 rad) - classic calligraphy & fountain pen angle
+  const NIB_ANGLE = 0.663;
+  const isPencil = stroke.tool === 'pencil';
+
   for (let i = 0; i < n; i++) {
     const p = points[i]!;
     const pressure = p.pressure ?? 0.5;
+    const angle = angles[i]!;
+    const speed = speeds[i]!;
 
-    // Velocity estimation
-    let speed = 0;
-    if (i > 0) {
-      const dx = pxs[i]! - pxs[i - 1]!;
-      const dy = pys[i]! - pys[i - 1]!;
-      const dist = Math.hypot(dx, dy);
-      const dt = Math.max(1, (p.time ?? 0) - (points[i - 1]!.time ?? 0));
-      speed = Math.min(1.0, (dist / dt) / 2.5);
+    // Nib variation factor: perpendicular to nib angle yields thicker strokes (e.g. 捺, 顿横),
+    // parallel to nib angle yields thinner strokes (e.g. 提, 挑)
+    const angleDiff = angle - NIB_ANGLE;
+    const nibFactor = isPencil
+      ? 0.85 + 0.25 * Math.abs(Math.sin(angleDiff))
+      : 0.52 + 0.68 * Math.abs(Math.sin(angleDiff));
+
+    // Corner / Pivot detection: angle changes rapidly between adjacent points
+    let cornerAccent = 1.0;
+    if (i > 0 && i < n - 1) {
+      let dAngle = Math.abs(angles[i + 1]! - angles[i - 1]!);
+      if (dAngle > Math.PI) dAngle = 2 * Math.PI - dAngle;
+      if (dAngle > 0.7 && speed < 0.6) {
+        // Slow sharp turn -> 顿笔蓄势 (Calligraphic shoulder accent)
+        cornerAccent = Math.min(1.45, 1.0 + dAngle * 0.22);
+      }
     }
 
-    // Direction angle
-    let angle = 0;
-    if (i === 0 && n > 1) {
-      angle = Math.atan2(pys[1]! - pys[0]!, pxs[1]! - pxs[0]!);
-    } else if (i === n - 1 && n > 1) {
-      angle = Math.atan2(pys[n - 1]! - pys[n - 2]!, pxs[n - 1]! - pxs[n - 2]!);
-    } else if (n > 2) {
-      angle = Math.atan2(pys[i + 1]! - pys[i - 1]!, pxs[i + 1]! - pxs[i - 1]!);
-    }
+    // Dynamic radius with pressure, speed damping, and nib orientation
+    const speedFactor = Math.max(0.55, 1.25 - 0.42 * Math.min(2.0, speed));
+    let r = (baseWidth / 2) * (0.35 + 0.85 * pressure) * speedFactor * nibFactor * cornerAccent;
 
-    // Calligraphic nib angle factor: perpendicular to nib angle is broader, parallel is thinner
-    const nibFactor = 0.65 + 0.45 * Math.abs(Math.sin(angle - NIB_ANGLE));
-
-    // Dynamic radius with pressure and velocity
-    let r = (baseWidth / 2) * (0.35 + 0.85 * pressure) * (1.15 - 0.3 * speed) * nibFactor;
-
-    // Start & End Tapering
+    // Entry (起笔) & Exit (出锋) Tapering:
     if (n >= 4) {
-      if (i === 0) r *= 0.25;
-      else if (i === 1) r *= 0.65;
-      else if (i === n - 2) r *= 0.65;
-      else if (i === n - 1) r *= 0.25;
+      if (i === 0) {
+        // Entry press: slightly tapered but maintains deliberate weight (顿笔入笔)
+        r *= 0.65;
+      } else if (i === 1) {
+        r *= 0.85;
+      } else if (i === n - 2) {
+        // Fast release creates sharp exit flick (提笔出锋)
+        const exitSpeed = speeds[n - 1]!;
+        r *= exitSpeed > 0.6 ? 0.45 : 0.75;
+      } else if (i === n - 1) {
+        const exitSpeed = speeds[n - 1]!;
+        r *= exitSpeed > 0.6 ? 0.12 : 0.55;
+      }
     }
 
-    radii[i] = Math.max(0.6, r);
+    radii[i] = Math.max(0.5, r);
 
     // Normal vector perpendicular to trajectory
     const nx = -Math.sin(angle);
@@ -651,7 +682,7 @@ export function strokeToCalligraphicPath(
     rightY[i] = pys[i]! - ny * radii[i]!;
   }
 
-  // Construct closed calligraphic ribbon polygon
+  // 3. Construct Closed Smooth Calligraphic Ribbon Polygon
   let d = `M ${leftX[0]!.toFixed(1)} ${leftY[0]!.toFixed(1)}`;
 
   // Forward along left edge with quadratic smoothing
@@ -662,8 +693,18 @@ export function strokeToCalligraphicPath(
   }
   d += ` L ${leftX[n - 1]!.toFixed(1)} ${leftY[n - 1]!.toFixed(1)}`;
 
-  // Rounded end cap
-  d += ` Q ${pxs[n - 1]!.toFixed(1)} ${pys[n - 1]!.toFixed(1)}, ${rightX[n - 1]!.toFixed(1)} ${rightY[n - 1]!.toFixed(1)}`;
+  // End cap: if fast flick, form needle-sharp point; if slow, rounded cap
+  const lastSpeed = speeds[n - 1]!;
+  if (lastSpeed > 0.65 && n >= 3) {
+    // Sharp needle flick tip (悬针竖 / 撇 / 钩出锋)
+    const tipDist = radii[n - 1]! * 1.5;
+    const tipX = (pxs[n - 1]! + Math.cos(angles[n - 1]!) * tipDist).toFixed(1);
+    const tipY = (pys[n - 1]! + Math.sin(angles[n - 1]!) * tipDist).toFixed(1);
+    d += ` L ${tipX} ${tipY} L ${rightX[n - 1]!.toFixed(1)} ${rightY[n - 1]!.toFixed(1)}`;
+  } else {
+    // Rounded / blunt end cap
+    d += ` Q ${pxs[n - 1]!.toFixed(1)} ${pys[n - 1]!.toFixed(1)}, ${rightX[n - 1]!.toFixed(1)} ${rightY[n - 1]!.toFixed(1)}`;
+  }
 
   // Backward along right edge with quadratic smoothing
   for (let i = n - 2; i > 0; i--) {

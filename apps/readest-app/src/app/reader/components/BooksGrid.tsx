@@ -176,18 +176,20 @@ const BookCellInner: React.FC<BookCellProps> = ({
         the transformed group, so the drag is luminance-invariant.
       */}
       <div ref={slideRef} className='bg-base-100 absolute inset-0'>
-        <FoliateViewer
-          key={viewerKey}
-          bookKey={bookKey}
-          bookDoc={bookDoc}
-          config={config}
-          gridInsets={gridInsets}
-          contentInsets={contentInsets}
-        />
-        <HandwritingLayer
-          bookKey={bookKey}
-          contentInsets={contentInsets}
-        />
+        <div id={`reader-content-${bookKey}`} className='absolute inset-0'>
+          <FoliateViewer
+            key={viewerKey}
+            bookKey={bookKey}
+            bookDoc={bookDoc}
+            config={config}
+            gridInsets={gridInsets}
+            contentInsets={contentInsets}
+          />
+          <HandwritingLayer
+            bookKey={bookKey}
+            contentInsets={contentInsets}
+          />
+        </div>
         {viewSettings.vertical && viewSettings.scrolled && (
           <>
             {(showFooter || viewSettings.doubleBorder) && (

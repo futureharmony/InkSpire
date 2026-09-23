@@ -382,6 +382,7 @@ export const useCapturedTurn = (bookKey: string, viewRef: React.RefObject<Foliat
       // The cell clips it, and the header/footer stay put like the paginator's
       // native push, which scrolls only the page strip.
       getPushTarget: () =>
+        document.getElementById(`reader-content-${bookKey}`) ??
         document
           .getElementById(`gridcell-${bookKey}`)
           ?.querySelector<HTMLElement>('foliate-view') ?? null,

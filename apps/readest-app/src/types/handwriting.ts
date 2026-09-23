@@ -1,4 +1,4 @@
-export type HandwritingTool = 'pen' | 'pencil' | 'highlighter' | 'eraser' | 'shape';
+export type HandwritingTool = 'pen' | 'pencil' | 'highlighter' | 'eraser' | 'shape' | 'lasso';
 
 export type HandwritingShapeType = 'line' | 'rectangle' | 'ellipse' | 'arrow';
 
@@ -51,9 +51,33 @@ export interface HandwritingStroke {
   updatedAt: number;
 }
 
+export type StickyNoteColor = 'yellow' | 'green' | 'blue' | 'pink' | 'slate';
+
+export interface HandwritingStickyNote {
+  id: string;
+  bookHash: string;
+  pageIndex: number;
+  /** Normalized coordinates (0..1) relative to page */
+  x: number;
+  y: number;
+  /** Selected or underlying text snippet */
+  selectedText?: string;
+  /** Typed note text */
+  content: string;
+  /** Handwritten doodle strokes inside the sticky note card */
+  strokes?: HandwritingStroke[];
+  /** Color theme */
+  color: StickyNoteColor;
+  /** Minimized to margin pin */
+  isPinned?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface HandwritingPageData {
   pageIndex: number;
   strokes: HandwritingStroke[];
+  stickyNotes?: HandwritingStickyNote[];
   aspectRatio?: number;
   updatedAt: number;
 }
@@ -62,6 +86,7 @@ export interface HandwritingBookData {
   version: 1;
   bookHash: string;
   pages: Record<number, HandwritingStroke[]>;
+  stickyNotes?: Record<number, HandwritingStickyNote[]>;
   updatedAt: number;
 }
 

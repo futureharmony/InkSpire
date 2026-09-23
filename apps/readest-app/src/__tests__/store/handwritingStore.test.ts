@@ -117,4 +117,51 @@ describe('Handwriting Store', () => {
     store.setStylusOnly(true);
     expect(useHandwritingStore.getState().stylusOnly).toBe(true);
   });
+
+  test('manages sticky notes lifecycle and updates', () => {
+    const store = useHandwritingStore.getState();
+    const bookHash = 'book-hash-1';
+    const pageIndex = 2;
+
+    const sampleNote = {
+      id: 'note-1',
+      bookHash,
+      pageIndex,
+      x: 0.2,
+      y: 0.3,
+      content: 'Important idea',
+      selectedText: 'Highlighted sentence',
+      color: 'yellow' as const,
+      isPinned: false,
+      createdAt: 1000,
+      updatedAt: 1000,
+    };
+
+    // Add note
+    store.addStickyNote(bookHash, pageIndex, sampleNote);
+    let notes = store.getStickyNotes(bookHash, pageIndex);
+    expect(notes.length).toBe(1);
+    expect(notes[0]?.content).toBe('Important idea');
+
+    // Update note
+    store.updateStickyNote(bookHash, pageIndex, 'note-1', {
+      content: 'Updated idea',
+      isPinned: true,
+      color: 'green',
+    });
+    notes = store.getStickyNotes(bookHash, pageIndex);
+    expect(notes[0]?.content).toBe('Updated idea');
+    expect(notes[0]?.isPinned).toBe(true);
+    expect(notes[0]?.color).toBe('green');
+
+    // Active note selection
+    store.setActiveStickyNoteId('note-1');
+    expect(useHandwritingStore.getState().activeStickyNoteId).toBe('note-1');
+
+    // Remove note
+    store.removeStickyNote(bookHash, pageIndex, 'note-1');
+    notes = store.getStickyNotes(bookHash, pageIndex);
+    expect(notes.length).toBe(0);
+    expect(useHandwritingStore.getState().activeStickyNoteId).toBeNull();
+  });
 });

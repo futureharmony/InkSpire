@@ -17,6 +17,7 @@ import {
   LuArrowRight,
   LuHand,
   LuScissors,
+  LuLassoSelect,
 } from 'react-icons/lu';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useHandwritingStore } from '@/store/handwritingStore';
@@ -246,6 +247,23 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
           >
             <LuEraser size={16} />
             {currentTool === 'eraser' && (
+              <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
+            )}
+          </button>
+
+          {/* 套索选字与便签 Lasso Tool */}
+          <button
+            title={_('Lasso Text Selection & Sticky Notes')}
+            className={clsx(
+              'btn btn-ghost btn-xs h-8 w-8 p-0 rounded-lg transition-all relative',
+              currentTool === 'lasso'
+                ? 'bg-primary text-primary-content shadow-xs scale-105'
+                : 'text-base-content/80 hover:bg-base-300',
+            )}
+            onClick={() => handleToolClick('lasso')}
+          >
+            <LuLassoSelect size={16} />
+            {currentTool === 'lasso' && (
               <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
             )}
           </button>
