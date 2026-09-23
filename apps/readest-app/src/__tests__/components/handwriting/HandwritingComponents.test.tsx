@@ -5,6 +5,7 @@ import { HandwritingToggler } from '@/app/reader/components/handwriting/Handwrit
 import { HandwritingToolbar } from '@/app/reader/components/handwriting/HandwritingToolbar';
 import { HandwritingLayer } from '@/app/reader/components/handwriting/HandwritingLayer';
 import { useHandwritingStore } from '@/store/handwritingStore';
+import { HandwritingStroke } from '@/types/handwriting';
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => (s: string, opts?: Record<string, string>) =>
@@ -372,6 +373,107 @@ describe('Handwriting UI Components', () => {
 
       // Swipe right DOES call prev()
       expect(mockView.prev).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens floating sub-toolbar on second click with continuous width slider and dual eraser modes', () => {
+      const bookKey = 'subtool-test-1';
+      useHandwritingStore.getState().toggleHandwriting(bookKey, true);
+      useHandwritingStore.getState().setTool('pen');
+
+      const { getByTitle, getByText, container } = render(
+        <HandwritingToolbar
+          bookKey={bookKey}
+          containerWidth={1000}
+          containerHeight={1000}
+        />,
+      );
+
+      // First click on active pen -> toggles sub-toolbar
+      const penBtn = getByTitle('Fountain Pen (Smooth & Pressure)');
+      fireEvent.click(penBtn);
+
+      // Sub-toolbar appears with continuous width slider
+      const slider = container.querySelector('input[type="range"]') as HTMLInputElement;
+      expect(slider).not.toBeNull();
+      fireEvent.change(slider, { target: { value: '5.5' } });
+      expect(useHandwritingStore.getState().currentWidth).toBe(5.5);
+
+      // Switch to eraser and double click it
+      const eraserBtn = getByTitle('Stroke Eraser');
+      fireEvent.click(eraserBtn); // activates eraser
+      fireEvent.click(eraserBtn); // opens eraser sub-toolbar
+
+      // Sub-toolbar provides dual modes: Full Stroke vs Partial Area
+      expect(getByText('Eraser Mode')).toBeDefined();
+      const partialModeBtn = getByText('Partial (Area)');
+      fireEvent.click(partialModeBtn);
+      expect(useHandwritingStore.getState().eraserType).toBe('partial');
+
+      const strokeModeBtn = getByText('Stroke (Full)');
+      fireEvent.click(strokeModeBtn);
+      expect(useHandwritingStore.getState().eraserType).toBe('stroke');
+    });
+
+    it('partial eraser splits stroke into segments in HandwritingLayer', () => {
+      const bookKey = 'partial-layer-test';
+      const bookHash = 'partial';
+      useHandwritingStore.getState().toggleHandwriting(bookKey, true);
+      useHandwritingStore.getState().setTool('eraser');
+      useHandwritingStore.getState().setEraserType('partial');
+      useHandwritingStore.getState().setEraserRadius(40);
+      useHandwritingStore.getState().setCurrentPageIndex(0);
+
+      // Setup a long stroke across x=100..900, y=500
+      const stroke: HandwritingStroke = {
+        id: 'stroke-to-split',
+        tool: 'pen',
+        color: '#000000',
+        width: 4,
+        opacity: 1,
+        pageIndex: 0,
+        createdAt: 1000,
+        updatedAt: 1000,
+        points: [
+          { x: 0.1, y: 0.5 },
+          { x: 0.3, y: 0.5 },
+          { x: 0.5, y: 0.5 },
+          { x: 0.7, y: 0.5 },
+          { x: 0.9, y: 0.5 },
+        ],
+      };
+      useHandwritingStore.getState().addStroke(bookHash, 0, stroke);
+
+      const { container } = render(
+        <HandwritingLayer
+          bookKey={bookKey}
+          contentInsets={{ top: 0, right: 0, bottom: 0, left: 0 }}
+        />,
+      );
+
+      const canvas = container.querySelector('canvas')!;
+      canvas.getBoundingClientRect = () => ({
+        left: 0,
+        top: 0,
+        width: 1000,
+        height: 1000,
+        right: 1000,
+        bottom: 1000,
+        x: 0,
+        y: 0,
+        toJSON: () => {},
+      });
+
+      // Erase at center (500, 500)
+      fireEvent.pointerDown(canvas, {
+        clientX: 500,
+        clientY: 500,
+        pointerType: 'pen',
+        pressure: 0.5,
+      });
+
+      // Partial eraser should split the stroke into 2 segments instead of dropping it
+      const strokesAfter = useHandwritingStore.getState().getPageStrokes(bookHash, 0);
+      expect(strokesAfter.length).toBe(2);
     });
   });
 });

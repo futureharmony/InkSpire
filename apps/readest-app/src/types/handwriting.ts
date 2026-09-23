@@ -2,7 +2,7 @@ export type HandwritingTool = 'pen' | 'pencil' | 'highlighter' | 'eraser' | 'sha
 
 export type HandwritingShapeType = 'line' | 'rectangle' | 'ellipse' | 'arrow';
 
-export type HandwritingEraserType = 'stroke' | 'area';
+export type HandwritingEraserType = 'stroke' | 'partial' | 'area';
 
 export interface HandwritingPoint {
   /** Normalized X coordinate (0 to 1 relative to container width) */

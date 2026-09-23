@@ -41,6 +41,7 @@ interface HandwritingState {
 
   addStroke: (bookHash: string, pageIndex: number, stroke: HandwritingStroke) => void;
   removeStroke: (bookHash: string, pageIndex: number, strokeId: string) => void;
+  setPageStrokes: (bookHash: string, pageIndex: number, strokes: HandwritingStroke[]) => void;
   clearPage: (bookHash: string, pageIndex: number) => void;
 
   undo: (bookHash: string, pageIndex: number) => void;
@@ -158,6 +159,33 @@ export const useHandwritingStore = create<HandwritingState>((set, get) => ({
         [bookHash]: {
           ...currentPages,
           [pageIndex]: filtered,
+        },
+      },
+      undoStacks: {
+        ...state.undoStacks,
+        [stackKey]: newUndoList,
+      },
+      redoStacks: {
+        ...state.redoStacks,
+        [stackKey]: [],
+      },
+    }));
+  },
+
+  setPageStrokes: (bookHash: string, pageIndex: number, strokes: HandwritingStroke[]) => {
+    const stackKey = getStackKey(bookHash, pageIndex);
+    const currentPages = get().bookStrokes[bookHash] || {};
+    const currentStrokes = currentPages[pageIndex] || [];
+
+    const undoList = get().undoStacks[stackKey] || [];
+    const newUndoList = [...undoList, currentStrokes].slice(-MAX_HISTORY);
+
+    set((state) => ({
+      bookStrokes: {
+        ...state.bookStrokes,
+        [bookHash]: {
+          ...currentPages,
+          [pageIndex]: strokes,
         },
       },
       undoStacks: {

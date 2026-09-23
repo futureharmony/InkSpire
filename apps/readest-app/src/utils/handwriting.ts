@@ -139,6 +139,144 @@ export function strokeIntersectsEraser(
   return false;
 }
 
+/**
+ * Partially erase a stroke by removing points and subsegments that fall within the eraser circle.
+ * Returns null if the stroke does not intersect the eraser at all.
+ * Returns an array of 0 or more remaining sub-strokes if intersected.
+ */
+export function eraseStrokePartially(
+  stroke: HandwritingStroke,
+  eraserCenter: HandwritingPoint,
+  width: number,
+  height: number,
+  eraserRadius: number,
+): HandwritingStroke[] | null {
+  if (!strokeIntersectsEraser(stroke, eraserCenter, width, height, eraserRadius)) {
+    return null;
+  }
+
+  const ex = eraserCenter.x * width;
+  const ey = eraserCenter.y * height;
+  const r = eraserRadius;
+  const rSq = r * r;
+
+  // For non-freehand shapes (rectangle, ellipse), clear whole shape if intersected
+  if (stroke.tool === 'shape' && stroke.shapeType !== 'line' && stroke.shapeType !== 'arrow') {
+    return [];
+  }
+
+  const points = stroke.points;
+  if (points.length === 0) return [];
+
+  const isInside = (p: HandwritingPoint) => {
+    const dx = p.x * width - ex;
+    const dy = p.y * height - ey;
+    return dx * dx + dy * dy <= rSq;
+  };
+
+  const segments: HandwritingPoint[][] = [];
+  let currentSegment: HandwritingPoint[] = [];
+
+  const getIntersections = (
+    p1: HandwritingPoint,
+    p2: HandwritingPoint,
+  ): { t: number; pt: HandwritingPoint }[] => {
+    const x1 = p1.x * width;
+    const y1 = p1.y * height;
+    const x2 = p2.x * width;
+    const y2 = p2.y * height;
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const fx = x1 - ex;
+    const fy = y1 - ey;
+
+    const a = dx * dx + dy * dy;
+    if (a < 1e-6) return [];
+    const b = 2 * (fx * dx + fy * dy);
+    const c = fx * fx + fy * fy - rSq;
+
+    const disc = b * b - 4 * a * c;
+    if (disc < 0) return [];
+
+    const sqrtDisc = Math.sqrt(disc);
+    const tValues = [(-b - sqrtDisc) / (2 * a), (-b + sqrtDisc) / (2 * a)]
+      .filter((t) => t > 0.001 && t < 0.999)
+      .sort((m, n) => m - n);
+
+    return tValues.map((t) => {
+      const p1Pressure = p1.pressure ?? 0.5;
+      const p2Pressure = p2.pressure ?? 0.5;
+      return {
+        t,
+        pt: {
+          x: (x1 + t * dx) / width,
+          y: (y1 + t * dy) / height,
+          pressure: p1Pressure + t * (p2Pressure - p1Pressure),
+          time: p1.time,
+        },
+      };
+    });
+  };
+
+  for (let i = 0; i < points.length; i++) {
+    const curr = points[i]!;
+    const currIn = isInside(curr);
+
+    if (i === 0) {
+      if (!currIn) {
+        currentSegment.push(curr);
+      }
+      continue;
+    }
+
+    const prev = points[i - 1]!;
+    const prevIn = isInside(prev);
+    const inters = getIntersections(prev, curr);
+
+    if (!prevIn && !currIn) {
+      if (inters.length === 2) {
+        currentSegment.push(inters[0]!.pt);
+        if (currentSegment.length > 0) {
+          segments.push(currentSegment);
+        }
+        currentSegment = [inters[1]!.pt, curr];
+      } else {
+        currentSegment.push(curr);
+      }
+    } else if (!prevIn && currIn) {
+      if (inters.length > 0) {
+        currentSegment.push(inters[0]!.pt);
+      }
+      if (currentSegment.length > 0) {
+        segments.push(currentSegment);
+        currentSegment = [];
+      }
+    } else if (prevIn && !currIn) {
+      if (inters.length > 0) {
+        currentSegment.push(inters[inters.length - 1]!.pt);
+      }
+      currentSegment.push(curr);
+    }
+  }
+
+  if (currentSegment.length > 0) {
+    segments.push(currentSegment);
+  }
+
+  const validSegments = segments.filter((seg) => {
+    if (seg.length > 1) return true;
+    if (seg.length === 1 && stroke.points.length === 1) return true;
+    return false;
+  });
+
+  return validSegments.map((seg, idx) => ({
+    ...stroke,
+    id: `${stroke.id}_part_${idx}_${Date.now()}`,
+    points: seg,
+    updatedAt: Date.now(),
+  }));
+}
+
 /** Snap a line to 0, 45, 90, 135, 180 degrees if close */
 export function snapLine(
   x1: number,

@@ -14,6 +14,7 @@ import {
   renderStrokeToCanvas,
   snapLine,
   strokeIntersectsEraser,
+  eraseStrokePartially,
   strokeToSvgPath,
   strokeToCalligraphicPath,
   toNormalizedPoint,
@@ -43,6 +44,12 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   const touchStartPos = useRef<{ x: number; y: number; time: number } | null>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 1200 });
 
+  // Swipe gesture & page turn animation state
+  const [dragOffset, setDragOffset] = useState<number>(0);
+  const [isAnimatingPageTurn, setIsAnimatingPageTurn] = useState<boolean>(false);
+  const prevPageIndexRef = useRef<number | null>(null);
+  const [pageTurnAnimClass, setPageTurnAnimClass] = useState<string>('');
+
   const bookHash = bookKey.split('-')[0]!;
   const view = useReaderStore((s) => s.getView(bookKey));
   const { isDarkMode } = useThemeStore();
@@ -57,12 +64,14 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     currentColor,
     currentWidth,
     currentOpacity,
+    eraserType,
     eraserRadius,
     stylusOnly,
     currentPageIndex,
     setCurrentPageIndex,
     addStroke,
     removeStroke,
+    setPageStrokes,
     getPageStrokes,
   } = useHandwritingStore();
 
@@ -74,7 +83,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     initBookHandwriting(bookKey, bookHash);
   }, [bookKey, bookHash]);
 
-  // 1. Synchronize page index reactively from useBookProgress
+  // Synchronize page index reactively from useBookProgress
   useEffect(() => {
     if (!progress) return;
     const pageInfo = isFixedLayout ? progress.section : progress.pageinfo;
@@ -92,7 +101,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     }
   }, [progress, isFixedLayout, currentPageIndex, setCurrentPageIndex]);
 
-  // 2. Track page / section index from Foliate relocate events as immediate fallback
+  // Track page index from Foliate relocate events
   useEffect(() => {
     if (!view) return;
     const handleRelocate = (e: Event) => {
@@ -121,7 +130,23 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     };
   }, [view, isFixedLayout, currentPageIndex, setCurrentPageIndex]);
 
-  // 3. Clear active drawing canvas buffer when changing pages
+  // Animate notes sliding in when page changes externally
+  useEffect(() => {
+    let timer: NodeJS.Timeout | undefined;
+    if (prevPageIndexRef.current !== null && prevPageIndexRef.current !== currentPageIndex) {
+      if (dragOffset === 0 && !isAnimatingPageTurn) {
+        const isForward = currentPageIndex > prevPageIndexRef.current;
+        setPageTurnAnimClass(isForward ? 'animate-in fade-in slide-in-from-right-8 duration-200' : 'animate-in fade-in slide-in-from-left-8 duration-200');
+        timer = setTimeout(() => setPageTurnAnimClass(''), 220);
+      }
+    }
+    prevPageIndexRef.current = currentPageIndex;
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [currentPageIndex, dragOffset, isAnimatingPageTurn]);
+
+  // Clear active drawing canvas buffer when changing pages
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas) {
@@ -150,25 +175,54 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     return () => window.removeEventListener('resize', updateSize);
   }, []);
 
-  // Eraser helper
+  // Eraser helper: supports both full stroke eraser and partial eraser
   const handleEraserAt = useCallback(
     (point: HandwritingPoint) => {
       const { width, height } = dimensions;
       const strokes = getPageStrokes(bookHash, currentPageIndex);
-      for (const stroke of strokes) {
-        if (strokeIntersectsEraser(stroke, point, width, height, eraserRadius)) {
-          removeStroke(bookHash, currentPageIndex, stroke.id);
-          const updated = getPageStrokes(bookHash, currentPageIndex).filter(
-            (s) => s.id !== stroke.id,
-          );
+
+      if (eraserType === 'partial') {
+        // Partial mode: only erase covered part, keep remaining parts
+        let hasModified = false;
+        const newStrokes: HandwritingStroke[] = [];
+
+        for (const stroke of strokes) {
+          const splitResult = eraseStrokePartially(stroke, point, width, height, eraserRadius);
+          if (splitResult !== null) {
+            hasModified = true;
+            newStrokes.push(...splitResult);
+          } else {
+            newStrokes.push(stroke);
+          }
+        }
+
+        if (hasModified) {
+          setPageStrokes(bookHash, currentPageIndex, newStrokes);
           persistPageHandwriting(
             bookKey,
             bookHash,
             currentPageIndex,
-            updated,
+            newStrokes,
             progress?.location,
           );
-          break;
+        }
+      } else {
+        // Stroke mode (default): clear entire stroke on touch
+        for (const stroke of strokes) {
+          if (strokeIntersectsEraser(stroke, point, width, height, eraserRadius)) {
+            removeStroke(bookHash, currentPageIndex, stroke.id);
+            const updated = getPageStrokes(bookHash, currentPageIndex).filter(
+              (s) => s.id !== stroke.id,
+            );
+            persistPageHandwriting(
+              bookKey,
+              bookHash,
+              currentPageIndex,
+              updated,
+              progress?.location,
+            );
+            break;
+          }
         }
       }
     },
@@ -178,9 +232,11 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       currentPageIndex,
       dimensions,
       eraserRadius,
+      eraserType,
       getPageStrokes,
       progress?.location,
       removeStroke,
+      setPageStrokes,
     ],
   );
 
@@ -241,8 +297,19 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isActive || !isDrawing.current) return;
-    if (stylusOnly && e.pointerType === 'touch') return;
+    if (!isActive) return;
+
+    // Touch gesture tracking for smooth swipe pagination
+    if (stylusOnly && e.pointerType === 'touch' && touchStartPos.current) {
+      const dx = e.clientX - touchStartPos.current.x;
+      const dy = e.clientY - touchStartPos.current.y;
+      if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+        setDragOffset(dx);
+      }
+      return;
+    }
+
+    if (!isDrawing.current) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -286,24 +353,38 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   const finishDrawing = (e?: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isActive) return;
 
-    // Handle touch gestures when stylusOnly is active
+    // Handle touch swipe gesture when stylusOnly is active
     if (stylusOnly && e?.pointerType === 'touch' && touchStartPos.current) {
       const deltaX = e.clientX - touchStartPos.current.x;
       const deltaY = e.clientY - touchStartPos.current.y;
       const duration = Date.now() - touchStartPos.current.time;
       touchStartPos.current = null;
 
-      // Quick tap or swipe
-      if (duration < 600 && Math.abs(deltaY) < 120) {
+      // Swipe detected: smoothly animate notes sliding out and new notes sliding in
+      if (duration < 700 && Math.abs(deltaY) < 150) {
         if (deltaX < -50) {
+          // Slide out to left -> turn forward
+          setIsAnimatingPageTurn(true);
+          setDragOffset(-dimensions.width);
           view?.next();
+          setTimeout(() => {
+            setDragOffset(0);
+            setIsAnimatingPageTurn(false);
+          }, 220);
           return;
         } else if (deltaX > 50) {
+          // Slide out to right -> turn backward
+          setIsAnimatingPageTurn(true);
+          setDragOffset(dimensions.width);
           view?.prev();
+          setTimeout(() => {
+            setDragOffset(0);
+            setIsAnimatingPageTurn(false);
+          }, 220);
           return;
         } else if (Math.abs(deltaX) < 25) {
-          // In handwriting mode, block click-to-turn on left (relX < 0.25) and right (relX > 0.75) blank margins.
-          // Swipes (deltaX < -50 / deltaX > 50) still paginate; only center tap toggles header/footer.
+          // Tap on center toggles navigation; margin taps are blocked
+          setDragOffset(0);
           const rect = canvasRef.current?.getBoundingClientRect();
           if (rect) {
             const relX = (e.clientX - rect.left) / rect.width;
@@ -314,6 +395,13 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
           }
           return;
         }
+      }
+
+      // If swipe threshold was not met, spring smoothly back to 0
+      if (dragOffset !== 0) {
+        setIsAnimatingPageTurn(true);
+        setDragOffset(0);
+        setTimeout(() => setIsAnimatingPageTurn(false), 200);
       }
       return;
     }
@@ -341,7 +429,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     const activeColor =
       currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
 
-    // Extract underlying text anchor if book has extractable text (EPUB / text PDF)
+    // Extract underlying text anchor if book has extractable text
     const textAnchor = extractTextAnchorForStroke(
       view,
       {
@@ -351,14 +439,14 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
         color: activeColor,
         width: currentWidth,
         opacity: currentOpacity,
-        points: currentStrokePoints.current,
+        points,
         pageIndex: currentPageIndex,
         createdAt: 0,
         updatedAt: 0,
       },
       dimensions.width,
       dimensions.height,
-      containerRef.current?.getBoundingClientRect(),
+      canvasRef.current?.getBoundingClientRect(),
     );
 
     const newStroke: HandwritingStroke = {
@@ -376,25 +464,20 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       updatedAt: Date.now(),
     };
 
-    // Add to store
     addStroke(bookHash, currentPageIndex, newStroke);
 
-    // Persist immediately
-    const updatedStrokes = [...getPageStrokes(bookHash, currentPageIndex)];
+    const updated = [...getPageStrokes(bookHash, currentPageIndex), newStroke];
     persistPageHandwriting(
       bookKey,
       bookHash,
       currentPageIndex,
-      updatedStrokes,
-      textAnchor?.cfi || progress?.location,
+      updated,
+      progress?.location,
     );
 
-    // Clear active drawing canvas
-    if (canvas) {
-      const ctx = canvas.getContext('2d');
-      ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
-    }
     currentStrokePoints.current = [];
+    const ctx = canvas?.getContext('2d');
+    ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -408,6 +491,187 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   const { width, height } = dimensions;
   const strokeScale = width / REFERENCE_WIDTH;
 
+  // Reusable stroke renderer for current and adjacent pages
+  const renderStrokes = (strokes: HandwritingStroke[], keyPrefix: string) => {
+    return strokes.map((stroke) => {
+      if (stroke.points.length === 0) return null;
+      const baseWidth = Math.max(1, stroke.width * strokeScale);
+      const strokeWidth =
+        stroke.tool === 'highlighter' ? baseWidth * 2.5 : baseWidth;
+      const opacity =
+        stroke.tool === 'highlighter' ? 0.35 : stroke.opacity || 1.0;
+      const blendStyle: React.CSSProperties =
+        stroke.tool === 'highlighter'
+          ? { mixBlendMode: isDarkMode ? 'screen' : 'multiply' }
+          : {};
+
+      if (stroke.tool === 'shape') {
+        const p1 = fromNormalizedPoint(stroke.points[0]!, width, height);
+        const p2 = fromNormalizedPoint(
+          stroke.points[stroke.points.length - 1]!,
+          width,
+          height,
+        );
+
+        if (stroke.shapeType === 'line' || stroke.shapeType === 'arrow') {
+          const snapped = snapLine(p1.x, p1.y, p2.x, p2.y);
+          const x2 = snapped.x2;
+          const y2 = snapped.y2;
+
+          let arrowHead: React.ReactNode = null;
+          if (stroke.shapeType === 'arrow') {
+            const headLength = Math.max(12, strokeWidth * 3.5);
+            const angle = Math.atan2(y2 - p1.y, x2 - p1.x);
+            const lx = x2 - headLength * Math.cos(angle - Math.PI / 6);
+            const ly = y2 - headLength * Math.sin(angle - Math.PI / 6);
+            const rx = x2 - headLength * Math.cos(angle + Math.PI / 6);
+            const ry = y2 - headLength * Math.sin(angle + Math.PI / 6);
+            arrowHead = (
+              <polygon
+                points={`${x2},${y2} ${lx},${ly} ${rx},${ry}`}
+                fill={stroke.color}
+                opacity={opacity}
+              />
+            );
+          }
+
+          return (
+            <g key={`${keyPrefix}_${stroke.id}`}>
+              <line
+                x1={p1.x}
+                y1={p1.y}
+                x2={x2}
+                y2={y2}
+                stroke={stroke.color}
+                strokeWidth={strokeWidth}
+                strokeLinecap='round'
+                opacity={opacity}
+              />
+              {arrowHead}
+            </g>
+          );
+        }
+
+        if (stroke.shapeType === 'rectangle') {
+          const rx = Math.min(p1.x, p2.x);
+          const ry = Math.min(p1.y, p2.y);
+          const rw = Math.abs(p2.x - p1.x);
+          const rh = Math.abs(p2.y - p1.y);
+          return (
+            <rect
+              key={`${keyPrefix}_${stroke.id}`}
+              x={rx}
+              y={ry}
+              width={rw}
+              height={rh}
+              fill='none'
+              stroke={stroke.color}
+              strokeWidth={strokeWidth}
+              strokeLinejoin='round'
+              opacity={opacity}
+            />
+          );
+        }
+
+        if (stroke.shapeType === 'ellipse') {
+          const cx = (p1.x + p2.x) / 2;
+          const cy = (p1.y + p2.y) / 2;
+          const rx = Math.abs(p2.x - p1.x) / 2;
+          const ry = Math.abs(p2.y - p1.y) / 2;
+          return (
+            <ellipse
+              key={`${keyPrefix}_${stroke.id}`}
+              cx={cx}
+              cy={cy}
+              rx={rx}
+              ry={ry}
+              fill='none'
+              stroke={stroke.color}
+              strokeWidth={strokeWidth}
+              opacity={opacity}
+            />
+          );
+        }
+      }
+
+      // Freehand tools: pen (calligraphic filled ribbon), pencil (fine textured line), highlighter (broad translucent)
+      if (stroke.tool === 'pen') {
+        const d = strokeToCalligraphicPath(stroke, width, height);
+        return (
+          <path
+            key={`${keyPrefix}_${stroke.id}`}
+            d={d}
+            fill={stroke.color}
+            stroke={stroke.color}
+            strokeWidth={0.5}
+            opacity={stroke.opacity || 1.0}
+          />
+        );
+      }
+
+      if (stroke.tool === 'pencil') {
+        const d = strokeToSvgPath(stroke, width, height);
+        const pencilWidth = Math.max(0.75, baseWidth * 0.5);
+        return (
+          <path
+            key={`${keyPrefix}_${stroke.id}`}
+            d={d}
+            fill='none'
+            stroke={stroke.color}
+            strokeWidth={pencilWidth}
+            strokeLinecap='round'
+            strokeLinejoin='round'
+            opacity={0.78}
+            filter='url(#inkspire-pencil-grain)'
+          />
+        );
+      }
+
+      if (stroke.tool === 'highlighter') {
+        const d = strokeToSvgPath(stroke, width, height);
+        const highlighterWidth = baseWidth * 2.8;
+        return (
+          <path
+            key={`${keyPrefix}_${stroke.id}`}
+            d={d}
+            fill='none'
+            stroke={stroke.color}
+            strokeWidth={highlighterWidth}
+            strokeLinecap='round'
+            strokeLinejoin='round'
+            opacity={0.35}
+            style={blendStyle}
+          />
+        );
+      }
+
+      const d = strokeToSvgPath(stroke, width, height);
+      return (
+        <path
+          key={`${keyPrefix}_${stroke.id}`}
+          d={d}
+          fill='none'
+          stroke={stroke.color}
+          strokeWidth={strokeWidth}
+          strokeLinecap='round'
+          strokeLinejoin='round'
+          opacity={opacity}
+          style={blendStyle}
+        />
+      );
+    });
+  };
+
+  const svgDefs = (
+    <defs>
+      <filter id='inkspire-pencil-grain' x='-20%' y='-20%' width='140%' height='140%'>
+        <feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' result='noise' />
+        <feDisplacementMap in='SourceGraphic' in2='noise' scale='1.2' xChannelSelector='R' yChannelSelector='G' result='displaced' />
+        <feColorMatrix type='matrix' values='1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.85 0' in='displaced' />
+      </filter>
+    </defs>
+  );
+
   return (
     <div
       ref={containerRef}
@@ -419,187 +683,58 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
         paddingLeft: contentInsets.left,
       }}
     >
-      {/* 1. Crisp, hardware-accelerated SVG Layer for completed strokes */}
-      <svg
-        className='absolute inset-0 w-full h-full pointer-events-none'
-        viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio='none'
+      {/* 1. Animated SVG Layer: Slides seamlessly when swiping or turning pages */}
+      <div
+        className={`absolute inset-0 pointer-events-none ${pageTurnAnimClass}`}
+        style={{
+          transform: dragOffset !== 0 ? `translateX(${dragOffset}px)` : undefined,
+          transition: isAnimatingPageTurn ? 'transform 220ms ease-out' : 'none',
+        }}
       >
-        <defs>
-          <filter id='inkspire-pencil-grain' x='-20%' y='-20%' width='140%' height='140%'>
-            <feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' result='noise' />
-            <feDisplacementMap in='SourceGraphic' in2='noise' scale='1.2' xChannelSelector='R' yChannelSelector='G' result='displaced' />
-            <feColorMatrix type='matrix' values='1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.85 0' in='displaced' />
-          </filter>
-        </defs>
-        {currentStrokes.map((stroke) => {
-          if (stroke.points.length === 0) return null;
-          const baseWidth = Math.max(1, stroke.width * strokeScale);
-          const strokeWidth =
-            stroke.tool === 'highlighter' ? baseWidth * 2.5 : baseWidth;
-          const opacity =
-            stroke.tool === 'highlighter' ? 0.35 : stroke.opacity || 1.0;
-          const blendStyle: React.CSSProperties =
-            stroke.tool === 'highlighter'
-              ? { mixBlendMode: isDarkMode ? 'screen' : 'multiply' }
-              : {};
+        {/* Current page strokes */}
+        <svg
+          className='absolute inset-0 w-full h-full pointer-events-none'
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio='none'
+        >
+          {svgDefs}
+          {renderStrokes(currentStrokes, 'curr')}
+        </svg>
 
-          if (stroke.tool === 'shape') {
-            const p1 = fromNormalizedPoint(stroke.points[0]!, width, height);
-            const p2 = fromNormalizedPoint(
-              stroke.points[stroke.points.length - 1]!,
-              width,
-              height,
-            );
+        {/* Next page preview while dragging to the left (deltaX < 0) */}
+        {dragOffset < 0 && (
+          <div
+            className='absolute inset-0 pointer-events-none'
+            style={{ transform: `translateX(${width}px)` }}
+          >
+            <svg
+              className='absolute inset-0 w-full h-full pointer-events-none'
+              viewBox={`0 0 ${width} ${height}`}
+              preserveAspectRatio='none'
+            >
+              {svgDefs}
+              {renderStrokes(getPageStrokes(bookHash, currentPageIndex + 1), 'next')}
+            </svg>
+          </div>
+        )}
 
-            if (stroke.shapeType === 'line' || stroke.shapeType === 'arrow') {
-              const snapped = snapLine(p1.x, p1.y, p2.x, p2.y);
-              const x2 = snapped.x2;
-              const y2 = snapped.y2;
-
-              let arrowHead: React.ReactNode = null;
-              if (stroke.shapeType === 'arrow') {
-                const headLength = Math.max(12, strokeWidth * 3.5);
-                const angle = Math.atan2(y2 - p1.y, x2 - p1.x);
-                const lx = x2 - headLength * Math.cos(angle - Math.PI / 6);
-                const ly = y2 - headLength * Math.sin(angle - Math.PI / 6);
-                const rx = x2 - headLength * Math.cos(angle + Math.PI / 6);
-                const ry = y2 - headLength * Math.sin(angle + Math.PI / 6);
-                arrowHead = (
-                  <polygon
-                    points={`${x2},${y2} ${lx},${ly} ${rx},${ry}`}
-                    fill={stroke.color}
-                    opacity={opacity}
-                  />
-                );
-              }
-
-              return (
-                <g key={stroke.id}>
-                  <line
-                    x1={p1.x}
-                    y1={p1.y}
-                    x2={x2}
-                    y2={y2}
-                    stroke={stroke.color}
-                    strokeWidth={strokeWidth}
-                    strokeLinecap='round'
-                    opacity={opacity}
-                  />
-                  {arrowHead}
-                </g>
-              );
-            }
-
-            if (stroke.shapeType === 'rectangle') {
-              const rx = Math.min(p1.x, p2.x);
-              const ry = Math.min(p1.y, p2.y);
-              const rw = Math.abs(p2.x - p1.x);
-              const rh = Math.abs(p2.y - p1.y);
-              return (
-                <rect
-                  key={stroke.id}
-                  x={rx}
-                  y={ry}
-                  width={rw}
-                  height={rh}
-                  fill='none'
-                  stroke={stroke.color}
-                  strokeWidth={strokeWidth}
-                  strokeLinejoin='round'
-                  opacity={opacity}
-                />
-              );
-            }
-
-            if (stroke.shapeType === 'ellipse') {
-              const cx = (p1.x + p2.x) / 2;
-              const cy = (p1.y + p2.y) / 2;
-              const rx = Math.abs(p2.x - p1.x) / 2;
-              const ry = Math.abs(p2.y - p1.y) / 2;
-              return (
-                <ellipse
-                  key={stroke.id}
-                  cx={cx}
-                  cy={cy}
-                  rx={rx}
-                  ry={ry}
-                  fill='none'
-                  stroke={stroke.color}
-                  strokeWidth={strokeWidth}
-                  opacity={opacity}
-                />
-              );
-            }
-          }
-
-          // Freehand tools: pen (calligraphic filled ribbon), pencil (fine textured line), highlighter (broad translucent)
-          if (stroke.tool === 'pen') {
-            const d = strokeToCalligraphicPath(stroke, width, height);
-            return (
-              <path
-                key={stroke.id}
-                d={d}
-                fill={stroke.color}
-                stroke={stroke.color}
-                strokeWidth={0.5}
-                opacity={stroke.opacity || 1.0}
-              />
-            );
-          }
-
-          if (stroke.tool === 'pencil') {
-            const d = strokeToSvgPath(stroke, width, height);
-            const pencilWidth = Math.max(0.75, baseWidth * 0.5);
-            return (
-              <path
-                key={stroke.id}
-                d={d}
-                fill='none'
-                stroke={stroke.color}
-                strokeWidth={pencilWidth}
-                strokeLinecap='round'
-                strokeLinejoin='round'
-                opacity={0.78}
-                filter='url(#inkspire-pencil-grain)'
-              />
-            );
-          }
-
-          if (stroke.tool === 'highlighter') {
-            const d = strokeToSvgPath(stroke, width, height);
-            const highlighterWidth = baseWidth * 2.8;
-            return (
-              <path
-                key={stroke.id}
-                d={d}
-                fill='none'
-                stroke={stroke.color}
-                strokeWidth={highlighterWidth}
-                strokeLinecap='round'
-                strokeLinejoin='round'
-                opacity={0.35}
-                style={blendStyle}
-              />
-            );
-          }
-
-          const d = strokeToSvgPath(stroke, width, height);
-          return (
-            <path
-              key={stroke.id}
-              d={d}
-              fill='none'
-              stroke={stroke.color}
-              strokeWidth={strokeWidth}
-              strokeLinecap='round'
-              strokeLinejoin='round'
-              opacity={opacity}
-              style={blendStyle}
-            />
-          );
-        })}
-      </svg>
+        {/* Previous page preview while dragging to the right (deltaX > 0) */}
+        {dragOffset > 0 && (
+          <div
+            className='absolute inset-0 pointer-events-none'
+            style={{ transform: `translateX(${-width}px)` }}
+          >
+            <svg
+              className='absolute inset-0 w-full h-full pointer-events-none'
+              viewBox={`0 0 ${width} ${height}`}
+              preserveAspectRatio='none'
+            >
+              {svgDefs}
+              {renderStrokes(getPageStrokes(bookHash, currentPageIndex - 1), 'prev')}
+            </svg>
+          </div>
+        )}
+      </div>
 
       {/* 2. Zero-latency active drawing canvas layer (only interactive when active) */}
       <canvas

@@ -10,6 +10,7 @@ import {
   strokesToSvg,
   importBookFromJson,
   extractTextAnchorForStroke,
+  eraseStrokePartially,
 } from '@/utils/handwriting';
 import { HandwritingStroke } from '@/types/handwriting';
 
@@ -341,5 +342,76 @@ describe('Handwriting Utils', () => {
       expect(extractTextAnchorForStroke(null, stroke, 800, 1200)).toBeUndefined();
     });
   });
+
+  describe('eraseStrokePartially', () => {
+    test('returns null when stroke does not intersect eraser', () => {
+      const stroke: HandwritingStroke = {
+        id: 's-miss',
+        tool: 'pen',
+        color: '#000000',
+        width: 3,
+        opacity: 1,
+        pageIndex: 0,
+        createdAt: 1000,
+        updatedAt: 1000,
+        points: [
+          { x: 0.1, y: 0.1 },
+          { x: 0.2, y: 0.2 },
+        ],
+      };
+
+      const result = eraseStrokePartially(stroke, { x: 0.8, y: 0.8 }, 1000, 1000, 20);
+      expect(result).toBeNull();
+    });
+
+    test('splits a stroke into two sub-strokes when eraser hits the middle', () => {
+      const stroke: HandwritingStroke = {
+        id: 's-middle',
+        tool: 'pen',
+        color: '#2563eb',
+        width: 4,
+        opacity: 1,
+        pageIndex: 0,
+        createdAt: 1000,
+        updatedAt: 1000,
+        points: [
+          { x: 0.1, y: 0.5 },
+          { x: 0.3, y: 0.5 },
+          { x: 0.5, y: 0.5 },
+          { x: 0.7, y: 0.5 },
+          { x: 0.9, y: 0.5 },
+        ],
+      };
+
+      // Eraser centered at x=0.5, y=0.5 with radius 80px (covering points around 0.5)
+      const result = eraseStrokePartially(stroke, { x: 0.5, y: 0.5 }, 1000, 1000, 80);
+      expect(result).not.toBeNull();
+      expect(result!.length).toBe(2);
+      expect(result![0]!.points[0]!.x).toBeCloseTo(0.1);
+      expect(result![1]!.points[result![1]!.points.length - 1]!.x).toBeCloseTo(0.9);
+    });
+
+    test('erases a stroke completely when all points are covered', () => {
+      const stroke: HandwritingStroke = {
+        id: 's-full',
+        tool: 'pen',
+        color: '#000000',
+        width: 2,
+        opacity: 1,
+        pageIndex: 0,
+        createdAt: 1000,
+        updatedAt: 1000,
+        points: [
+          { x: 0.5, y: 0.5 },
+          { x: 0.51, y: 0.51 },
+        ],
+      };
+
+      const result = eraseStrokePartially(stroke, { x: 0.5, y: 0.5 }, 1000, 1000, 100);
+      expect(result).not.toBeNull();
+      expect(result!.length).toBe(0);
+    });
+  });
 });
+
 
