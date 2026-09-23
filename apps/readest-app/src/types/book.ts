@@ -24,7 +24,7 @@ export type BookFormat =
   | 'OPDSAUDIO'
   // Streaming audiobook from BookOrbit's audiobook API; filePath is bookorbit://<bookId> (#6224)
   | 'BOOKORBIT';
-export type BookNoteType = 'bookmark' | 'annotation' | 'excerpt' | 'notebook';
+export type BookNoteType = 'bookmark' | 'annotation' | 'excerpt' | 'notebook' | 'handwriting';
 export type ReadingStatus = 'unread' | 'reading' | 'finished' | 'abandoned';
 export type HighlightStyle = 'highlight' | 'underline' | 'squiggly';
 // Predefined highlight colors, can be extended with custom hex colors

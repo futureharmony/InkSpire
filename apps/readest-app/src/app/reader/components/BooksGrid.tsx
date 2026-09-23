@@ -22,6 +22,7 @@ import FooterBar from './footerbar/FooterBar';
 import ProgressBar from './ProgressBar';
 import BookmarkPullDown from './BookmarkPullDown';
 import Annotator from './annotator/Annotator';
+import HandwritingLayer from './handwriting/HandwritingLayer';
 import FootnotePopup from './FootnotePopup';
 import HintInfo from './HintInfo';
 import ReadingRuler from './ReadingRuler';
@@ -181,6 +182,10 @@ const BookCellInner: React.FC<BookCellProps> = ({
           bookDoc={bookDoc}
           config={config}
           gridInsets={gridInsets}
+          contentInsets={contentInsets}
+        />
+        <HandwritingLayer
+          bookKey={bookKey}
           contentInsets={contentInsets}
         />
         {viewSettings.vertical && viewSettings.scrolled && (
