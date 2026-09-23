@@ -34,17 +34,23 @@ vi.mock('@/store/bookDataStore', () => {
   return { useBookDataStore: hook };
 });
 
-vi.mock('@/store/readerStore', () => ({
-  useReaderStore: (fn?: (state: unknown) => unknown) => {
-    const mockState = {
-      getView: () => ({
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      }),
-    };
-    return fn ? fn(mockState) : mockState;
-  },
-}));
+const mockView = {
+  addEventListener: vi.fn(),
+  removeEventListener: vi.fn(),
+  next: vi.fn(),
+  prev: vi.fn(),
+};
+
+vi.mock('@/store/readerStore', () => {
+  const mockState = {
+    getView: () => mockView,
+    hoveredBookKey: null,
+    setHoveredBookKey: vi.fn(),
+  };
+  const hook = (fn?: (state: unknown) => unknown) => (fn ? fn(mockState) : mockState);
+  hook.getState = () => mockState;
+  return { useReaderStore: hook };
+});
 
 describe('Handwriting UI Components', () => {
   const bookKey = 'book123-key';
@@ -247,6 +253,125 @@ describe('Handwriting UI Components', () => {
       paths = container.querySelectorAll('svg path');
       expect(paths.length).toBe(1);
       expect(paths[0]?.getAttribute('stroke')).toBe('#2563eb');
+    });
+
+    it('renders pencil strokes with finer width, 0.78 opacity, and inkspire-pencil-grain filter', () => {
+      const bookHash = bookKey.split('-')[0]!;
+      useHandwritingStore.getState().addStroke(bookHash, 0, {
+        id: 'stroke-pencil-1',
+        tool: 'pencil',
+        color: '#4b5563',
+        width: 3,
+        opacity: 0.78,
+        pageIndex: 0,
+        createdAt: 1000,
+        updatedAt: 1000,
+        points: [
+          { x: 0.1, y: 0.1 },
+          { x: 0.4, y: 0.4 },
+        ],
+      });
+
+      const { container } = render(
+        <HandwritingLayer
+          bookKey={bookKey}
+          contentInsets={{ top: 0, right: 0, bottom: 0, left: 0 }}
+        />,
+      );
+
+      const path = container.querySelector('svg path');
+      expect(path).toBeDefined();
+      expect(path?.getAttribute('stroke')).toBe('#4b5563');
+      expect(path?.getAttribute('opacity')).toBe('0.78');
+      expect(path?.getAttribute('filter')).toBe('url(#inkspire-pencil-grain)');
+      // Pencil width is finer than base (width 3 * 0.5 = 1.5 at standard width)
+      expect(Number(path?.getAttribute('stroke-width'))).toBeLessThan(3);
+    });
+
+    it('blocks margin tap page-turn while allowing horizontal swipe page-turn in handwriting mode', () => {
+      useHandwritingStore.getState().toggleHandwriting(bookKey, true);
+      useHandwritingStore.getState().setStylusOnly(true);
+
+      mockView.next.mockClear();
+      mockView.prev.mockClear();
+
+      const { container } = render(
+        <HandwritingLayer
+          bookKey={bookKey}
+          contentInsets={{ top: 0, right: 0, bottom: 0, left: 0 }}
+        />,
+      );
+
+      const canvas = container.querySelector('canvas')!;
+      expect(canvas).toBeDefined();
+
+      // 1. Touch tap on right margin (clientX = 780 of 800 width, relX > 0.75)
+      fireEvent.pointerDown(canvas, {
+        clientX: 780,
+        clientY: 300,
+        pointerType: 'touch',
+        pressure: 0,
+      });
+      fireEvent.pointerUp(canvas, {
+        clientX: 780,
+        clientY: 300,
+        pointerType: 'touch',
+        pressure: 0,
+      });
+
+      // Assert next() is NOT called (margin tap is blocked!)
+      expect(mockView.next).not.toHaveBeenCalled();
+
+      // 2. Touch tap on left margin (clientX = 50 of 800 width, relX < 0.25)
+      fireEvent.pointerDown(canvas, {
+        clientX: 50,
+        clientY: 300,
+        pointerType: 'touch',
+        pressure: 0,
+      });
+      fireEvent.pointerUp(canvas, {
+        clientX: 50,
+        clientY: 300,
+        pointerType: 'touch',
+        pressure: 0,
+      });
+
+      // Assert prev() is NOT called (margin tap is blocked!)
+      expect(mockView.prev).not.toHaveBeenCalled();
+
+      // 3. Horizontal swipe left (deltaX = -80 < -50)
+      fireEvent.pointerDown(canvas, {
+        clientX: 400,
+        clientY: 300,
+        pointerType: 'touch',
+        pressure: 0,
+      });
+      fireEvent.pointerUp(canvas, {
+        clientX: 320,
+        clientY: 300,
+        pointerType: 'touch',
+        pressure: 0,
+      });
+
+      // Swipe left DOES call next()
+      expect(mockView.next).toHaveBeenCalledTimes(1);
+
+      // 4. Horizontal swipe right (deltaX = +80 > 50)
+      fireEvent.pointerDown(canvas, {
+        clientX: 400,
+        clientY: 300,
+        pointerType: 'touch',
+        pressure: 0,
+      });
+      fireEvent.pointerUp(canvas, {
+        clientX: 480,
+        clientY: 300,
+        pointerType: 'touch',
+        pressure: 0,
+      });
+
+      // Swipe right DOES call prev()
+      expect(mockView.prev).toHaveBeenCalledTimes(1);
     });
   });
 });

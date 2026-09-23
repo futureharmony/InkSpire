@@ -15,6 +15,7 @@ import {
   snapLine,
   strokeIntersectsEraser,
   strokeToSvgPath,
+  strokeToCalligraphicPath,
   toNormalizedPoint,
   extractTextAnchorForStroke,
   REFERENCE_WIDTH,
@@ -301,21 +302,17 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
           view?.prev();
           return;
         } else if (Math.abs(deltaX) < 25) {
+          // In handwriting mode, block click-to-turn on left (relX < 0.25) and right (relX > 0.75) blank margins.
+          // Swipes (deltaX < -50 / deltaX > 50) still paginate; only center tap toggles header/footer.
           const rect = canvasRef.current?.getBoundingClientRect();
           if (rect) {
             const relX = (e.clientX - rect.left) / rect.width;
-            if (relX > 0.75) {
-              view?.next();
-              return;
-            } else if (relX < 0.25) {
-              view?.prev();
-              return;
-            } else {
+            if (relX >= 0.25 && relX <= 0.75) {
               const hovered = useReaderStore.getState().hoveredBookKey;
               useReaderStore.getState().setHoveredBookKey(hovered === bookKey ? '' : bookKey);
-              return;
             }
           }
+          return;
         }
       }
       return;
@@ -428,6 +425,13 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio='none'
       >
+        <defs>
+          <filter id='inkspire-pencil-grain' x='-20%' y='-20%' width='140%' height='140%'>
+            <feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' result='noise' />
+            <feDisplacementMap in='SourceGraphic' in2='noise' scale='1.2' xChannelSelector='R' yChannelSelector='G' result='displaced' />
+            <feColorMatrix type='matrix' values='1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.85 0' in='displaced' />
+          </filter>
+        </defs>
         {currentStrokes.map((stroke) => {
           if (stroke.points.length === 0) return null;
           const baseWidth = Math.max(1, stroke.width * strokeScale);
@@ -529,7 +533,57 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
             }
           }
 
-          // Freehand path
+          // Freehand tools: pen (calligraphic filled ribbon), pencil (fine textured line), highlighter (broad translucent)
+          if (stroke.tool === 'pen') {
+            const d = strokeToCalligraphicPath(stroke, width, height);
+            return (
+              <path
+                key={stroke.id}
+                d={d}
+                fill={stroke.color}
+                stroke={stroke.color}
+                strokeWidth={0.5}
+                opacity={stroke.opacity || 1.0}
+              />
+            );
+          }
+
+          if (stroke.tool === 'pencil') {
+            const d = strokeToSvgPath(stroke, width, height);
+            const pencilWidth = Math.max(0.75, baseWidth * 0.5);
+            return (
+              <path
+                key={stroke.id}
+                d={d}
+                fill='none'
+                stroke={stroke.color}
+                strokeWidth={pencilWidth}
+                strokeLinecap='round'
+                strokeLinejoin='round'
+                opacity={0.78}
+                filter='url(#inkspire-pencil-grain)'
+              />
+            );
+          }
+
+          if (stroke.tool === 'highlighter') {
+            const d = strokeToSvgPath(stroke, width, height);
+            const highlighterWidth = baseWidth * 2.8;
+            return (
+              <path
+                key={stroke.id}
+                d={d}
+                fill='none'
+                stroke={stroke.color}
+                strokeWidth={highlighterWidth}
+                strokeLinecap='round'
+                strokeLinejoin='round'
+                opacity={0.35}
+                style={blendStyle}
+              />
+            );
+          }
+
           const d = strokeToSvgPath(stroke, width, height);
           return (
             <path

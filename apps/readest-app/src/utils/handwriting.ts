@@ -275,42 +275,96 @@ export function renderStrokeToCanvas(
     const px = p.x * width;
     const py = p.y * height;
     ctx.beginPath();
-    ctx.arc(px, py, baseWidth / 2, 0, Math.PI * 2);
+    ctx.arc(
+      px,
+      py,
+      stroke.tool === 'pencil' ? baseWidth * 0.25 : baseWidth * 0.5,
+      0,
+      Math.PI * 2,
+    );
     ctx.fill();
     ctx.restore();
     return;
   }
 
-  // Smooth quadratic bezier curves
   if (stroke.tool === 'pen') {
-    // Dynamic pressure-sensitive calligraphic line
-    for (let i = 0; i < points.length - 1; i++) {
+    // Dynamic calligraphic fountain pen rendering
+    const pathStr = strokeToCalligraphicPath(stroke, width, height);
+    if (pathStr && typeof Path2D !== 'undefined') {
+      const p2d = new Path2D(pathStr);
+      ctx.fillStyle = stroke.color;
+      ctx.globalAlpha = stroke.opacity || 1.0;
+      ctx.fill(p2d);
+    } else {
+      for (let i = 0; i < points.length - 1; i++) {
+        const p1 = points[i]!;
+        const p2 = points[i + 1]!;
+        const x1 = p1.x * width;
+        const y1 = p1.y * height;
+        const x2 = p2.x * width;
+        const y2 = p2.y * height;
+        const midX = (x1 + x2) / 2;
+        const midY = (y1 + y2) / 2;
+        const pressure = p2.pressure ?? 0.5;
+        ctx.lineWidth = Math.max(0.5, baseWidth * (0.35 + 0.85 * pressure));
+        ctx.beginPath();
+        if (i === 0) {
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(midX, midY);
+        } else {
+          const prevMidX = (points[i - 1]!.x * width + x1) / 2;
+          const prevMidY = (points[i - 1]!.y * height + y1) / 2;
+          ctx.moveTo(prevMidX, prevMidY);
+          ctx.quadraticCurveTo(x1, y1, midX, midY);
+        }
+        ctx.stroke();
+      }
+    }
+  } else if (stroke.tool === 'pencil') {
+    // Graphite pencil: relatively finer stroke + authentic graphite texture
+    const pencilWidth = Math.max(0.6, baseWidth * 0.5);
+    ctx.strokeStyle = stroke.color;
+    ctx.lineWidth = pencilWidth;
+    ctx.globalAlpha = (stroke.opacity || 0.78) * 0.85;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    ctx.beginPath();
+    const first = points[0]!;
+    ctx.moveTo(first.x * width, first.y * height);
+
+    for (let i = 1; i < points.length - 1; i++) {
       const p1 = points[i]!;
       const p2 = points[i + 1]!;
-      const x1 = p1.x * width;
-      const y1 = p1.y * height;
-      const x2 = p2.x * width;
-      const y2 = p2.y * height;
-      const midX = (x1 + x2) / 2;
-      const midY = (y1 + y2) / 2;
-      const pressure = p2.pressure ?? 0.5;
-      const segmentWidth = Math.max(0.5, baseWidth * (0.4 + 0.8 * pressure));
+      const xc = (p1.x * width + p2.x * width) / 2;
+      const yc = (p1.y * height + p2.y * height) / 2;
+      ctx.quadraticCurveTo(p1.x * width, p1.y * height, xc, yc);
+    }
+    const last = points[points.length - 1]!;
+    ctx.lineTo(last.x * width, last.y * height);
+    ctx.stroke();
 
-      ctx.lineWidth = segmentWidth;
-      ctx.beginPath();
-      if (i === 0) {
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(midX, midY);
-      } else {
-        const prevMidX = (points[i - 1]!.x * width + x1) / 2;
-        const prevMidY = (points[i - 1]!.y * height + y1) / 2;
-        ctx.moveTo(prevMidX, prevMidY);
-        ctx.quadraticCurveTo(x1, y1, midX, midY);
-      }
-      ctx.stroke();
+    // Subtle graphite paper texture grain
+    ctx.fillStyle = stroke.color;
+    ctx.globalAlpha = 0.22;
+    for (let i = 0; i < points.length; i += 2) {
+      const pt = points[i]!;
+      const px = pt.x * width;
+      const py = pt.y * height;
+      const noiseX = Math.sin(px * 12.9898 + py * 78.233) * pencilWidth * 0.45;
+      const noiseY = Math.cos(px * 93.9898 + py * 67.345) * pencilWidth * 0.45;
+      ctx.fillRect(px + noiseX, py + noiseY, 0.9, 0.9);
     }
   } else {
-    // Standard smoothed path for pencil / highlighter
+    // Highlighter / Watercolor
+    ctx.strokeStyle = stroke.color;
+    ctx.fillStyle = stroke.color;
+    ctx.globalAlpha = stroke.opacity || 0.35;
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.lineWidth = baseWidth * 2.8;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
     ctx.beginPath();
     const first = points[0]!;
     ctx.moveTo(first.x * width, first.y * height);
@@ -368,6 +422,123 @@ export function strokeToSvgPath(
   }
   const last = points[points.length - 1]!;
   d += ` L ${last.x * width} ${last.y * height}`;
+  return d;
+}
+
+/**
+ * Generate a calligraphic filled outline SVG path for a fountain pen stroke,
+ * accurately simulating flexible nib angle, pressure dynamics, velocity, and tapering.
+ */
+export function strokeToCalligraphicPath(
+  stroke: HandwritingStroke,
+  width: number,
+  height: number,
+): string {
+  const points = stroke.points;
+  if (points.length === 0) return '';
+
+  const strokeScale = width / REFERENCE_WIDTH;
+  const baseWidth = Math.max(1, stroke.width * strokeScale);
+
+  if (points.length === 1) {
+    const p = points[0]!;
+    const px = (p.x * width).toFixed(1);
+    const py = (p.y * height).toFixed(1);
+    const r = Math.max(0.6, (baseWidth * (0.4 + 0.6 * (p.pressure ?? 0.5))) / 2).toFixed(1);
+    return `M ${px} ${py} m -${r}, 0 a ${r},${r} 0 1,0 ${(Number(r) * 2).toFixed(1)},0 a ${r},${r} 0 1,0 -${(Number(r) * 2).toFixed(1)},0 Z`;
+  }
+
+  const n = points.length;
+  const pxs = new Float32Array(n);
+  const pys = new Float32Array(n);
+  const radii = new Float32Array(n);
+  const leftX = new Float32Array(n);
+  const leftY = new Float32Array(n);
+  const rightX = new Float32Array(n);
+  const rightY = new Float32Array(n);
+
+  for (let i = 0; i < n; i++) {
+    pxs[i] = points[i]!.x * width;
+    pys[i] = points[i]!.y * height;
+  }
+
+  const NIB_ANGLE = Math.PI / 4; // 45-degree calligraphic angle
+  for (let i = 0; i < n; i++) {
+    const p = points[i]!;
+    const pressure = p.pressure ?? 0.5;
+
+    // Velocity estimation
+    let speed = 0;
+    if (i > 0) {
+      const dx = pxs[i]! - pxs[i - 1]!;
+      const dy = pys[i]! - pys[i - 1]!;
+      const dist = Math.hypot(dx, dy);
+      const dt = Math.max(1, (p.time ?? 0) - (points[i - 1]!.time ?? 0));
+      speed = Math.min(1.0, (dist / dt) / 2.5);
+    }
+
+    // Direction angle
+    let angle = 0;
+    if (i === 0 && n > 1) {
+      angle = Math.atan2(pys[1]! - pys[0]!, pxs[1]! - pxs[0]!);
+    } else if (i === n - 1 && n > 1) {
+      angle = Math.atan2(pys[n - 1]! - pys[n - 2]!, pxs[n - 1]! - pxs[n - 2]!);
+    } else if (n > 2) {
+      angle = Math.atan2(pys[i + 1]! - pys[i - 1]!, pxs[i + 1]! - pxs[i - 1]!);
+    }
+
+    // Calligraphic nib angle factor: perpendicular to nib angle is broader, parallel is thinner
+    const nibFactor = 0.65 + 0.45 * Math.abs(Math.sin(angle - NIB_ANGLE));
+
+    // Dynamic radius with pressure and velocity
+    let r = (baseWidth / 2) * (0.35 + 0.85 * pressure) * (1.15 - 0.3 * speed) * nibFactor;
+
+    // Start & End Tapering
+    if (n >= 4) {
+      if (i === 0) r *= 0.25;
+      else if (i === 1) r *= 0.65;
+      else if (i === n - 2) r *= 0.65;
+      else if (i === n - 1) r *= 0.25;
+    }
+
+    radii[i] = Math.max(0.6, r);
+
+    // Normal vector perpendicular to trajectory
+    const nx = -Math.sin(angle);
+    const ny = Math.cos(angle);
+
+    leftX[i] = pxs[i]! + nx * radii[i]!;
+    leftY[i] = pys[i]! + ny * radii[i]!;
+    rightX[i] = pxs[i]! - nx * radii[i]!;
+    rightY[i] = pys[i]! - ny * radii[i]!;
+  }
+
+  // Construct closed calligraphic ribbon polygon
+  let d = `M ${leftX[0]!.toFixed(1)} ${leftY[0]!.toFixed(1)}`;
+
+  // Forward along left edge with quadratic smoothing
+  for (let i = 1; i < n - 1; i++) {
+    const midX = ((leftX[i]! + leftX[i + 1]!) / 2).toFixed(1);
+    const midY = ((leftY[i]! + leftY[i + 1]!) / 2).toFixed(1);
+    d += ` Q ${leftX[i]!.toFixed(1)} ${leftY[i]!.toFixed(1)}, ${midX} ${midY}`;
+  }
+  d += ` L ${leftX[n - 1]!.toFixed(1)} ${leftY[n - 1]!.toFixed(1)}`;
+
+  // Rounded end cap
+  d += ` Q ${pxs[n - 1]!.toFixed(1)} ${pys[n - 1]!.toFixed(1)}, ${rightX[n - 1]!.toFixed(1)} ${rightY[n - 1]!.toFixed(1)}`;
+
+  // Backward along right edge with quadratic smoothing
+  for (let i = n - 2; i > 0; i--) {
+    const midX = ((rightX[i]! + rightX[i - 1]!) / 2).toFixed(1);
+    const midY = ((rightY[i]! + rightY[i - 1]!) / 2).toFixed(1);
+    d += ` Q ${rightX[i]!.toFixed(1)} ${rightY[i]!.toFixed(1)}, ${midX} ${midY}`;
+  }
+  d += ` L ${rightX[0]!.toFixed(1)} ${rightY[0]!.toFixed(1)}`;
+
+  // Rounded start cap
+  d += ` Q ${pxs[0]!.toFixed(1)} ${pys[0]!.toFixed(1)}, ${leftX[0]!.toFixed(1)} ${leftY[0]!.toFixed(1)}`;
+
+  d += ' Z';
   return d;
 }
 
@@ -432,14 +603,39 @@ export function strokesToSvg(
         );
       }
     } else {
-      const d = strokeToSvgPath(stroke, width, height);
-      if (d) {
-        elements.push(
-          `<path d="${d}" fill="none" stroke="${stroke.color}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" opacity="${opacity}" style="${blendMode}" />`,
-        );
+      if (stroke.tool === 'pen') {
+        const d = strokeToCalligraphicPath(stroke, width, height);
+        if (d) {
+          elements.push(
+            `<path d="${d}" fill="${stroke.color}" stroke="${stroke.color}" stroke-width="0.5" opacity="${opacity}" />`,
+          );
+        }
+      } else if (stroke.tool === 'pencil') {
+        const d = strokeToSvgPath(stroke, width, height);
+        if (d) {
+          const pencilWidth = Math.max(0.75, baseWidth * 0.5);
+          elements.push(
+            `<path d="${d}" fill="none" stroke="${stroke.color}" stroke-width="${pencilWidth}" stroke-linecap="round" stroke-linejoin="round" opacity="0.78" filter="url(#inkspire-pencil-grain)" />`,
+          );
+        }
+      } else {
+        const d = strokeToSvgPath(stroke, width, height);
+        if (d) {
+          elements.push(
+            `<path d="${d}" fill="none" stroke="${stroke.color}" stroke-width="${baseWidth * 2.8}" stroke-linecap="round" stroke-linejoin="round" opacity="0.35" style="${blendMode}" />`,
+          );
+        }
       }
     }
   }
+
+  const defs = `<defs>
+    <filter id="inkspire-pencil-grain" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" result="noise" />
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.2" xChannelSelector="R" yChannelSelector="G" result="displaced" />
+      <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.85 0" in="displaced" />
+    </filter>
+  </defs>`;
 
   const bgRect = options?.transparentBg
     ? ''
@@ -447,6 +643,7 @@ export function strokesToSvg(
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+  ${defs}
   ${bgRect}
   ${elements.join('\n  ')}
 </svg>`;

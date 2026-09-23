@@ -6,6 +6,7 @@ import {
   strokeIntersectsEraser,
   snapLine,
   strokeToSvgPath,
+  strokeToCalligraphicPath,
   strokesToSvg,
   importBookFromJson,
   extractTextAnchorForStroke,
@@ -202,6 +203,30 @@ describe('Handwriting Utils', () => {
       expect(svg).toContain('viewBox="0 0 800 1200"');
       expect(svg).toContain('<path');
       expect(svg).toContain('<rect');
+    });
+
+    test('strokeToCalligraphicPath generates closed ribbon polygon path for pen', () => {
+      const stroke: HandwritingStroke = {
+        id: 's-callig',
+        tool: 'pen',
+        color: '#000000',
+        width: 3,
+        opacity: 1,
+        pageIndex: 0,
+        createdAt: 1000,
+        updatedAt: 1000,
+        points: [
+          { x: 0.1, y: 0.1, pressure: 0.5 },
+          { x: 0.2, y: 0.2, pressure: 0.7 },
+          { x: 0.3, y: 0.25, pressure: 0.6 },
+          { x: 0.4, y: 0.35, pressure: 0.4 },
+        ],
+      };
+
+      const path = strokeToCalligraphicPath(stroke, 1000, 1000);
+      expect(path.startsWith('M')).toBe(true);
+      expect(path.endsWith('Z')).toBe(true);
+      expect(path).toContain('L');
     });
   });
 

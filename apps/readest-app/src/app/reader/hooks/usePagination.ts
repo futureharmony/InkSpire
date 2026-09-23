@@ -7,6 +7,7 @@ import { useBookDataStore } from '@/store/bookDataStore';
 import { useDeviceControlStore } from '@/store/deviceStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useSidebarStore } from '@/store/sidebarStore';
+import { useHandwritingStore } from '@/store/handwritingStore';
 import { eventDispatcher } from '@/utils/event';
 import {
   resolvePageTurn,
@@ -261,12 +262,18 @@ export const usePagination = (
             if (!consumed) {
               const centerStartX = viewStartX + viewRect.width * 0.375;
               const centerEndX = viewStartX + viewRect.width * 0.625;
+              const isHandwritingActive = useHandwritingStore.getState().activeBookKey === bookKey;
+
               if (
                 viewSettings.disableClick! ||
+                isHandwritingActive ||
                 (screenX >= centerStartX && screenX <= centerEndX)
               ) {
-                // toggle visibility of the header bar and the footer bar
-                setHoveredBookKey(hoveredBookKey ? null : bookKey);
+                // In handwriting mode, disable margin click page turns to prevent accidental palm turns.
+                // Only center clicks toggle header/footer bars.
+                if (screenX >= centerStartX && screenX <= centerEndX) {
+                  setHoveredBookKey(hoveredBookKey ? null : bookKey);
+                }
                 return;
               }
 
@@ -350,7 +357,8 @@ export const usePagination = (
         const leftThreshold = width * 0.5;
         const rightThreshold = width * 0.5;
         const viewSettings = getViewSettings(bookKey);
-        if (!viewSettings?.disableClick) {
+        const isHandwritingActive = useHandwritingStore.getState().activeBookKey === bookKey;
+        if (!viewSettings?.disableClick && !isHandwritingActive) {
           if (clientX < leftThreshold) {
             viewPagination(viewRef.current, viewSettings, 'left');
           } else if (clientX > rightThreshold) {
