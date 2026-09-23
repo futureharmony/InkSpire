@@ -130,15 +130,22 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     };
   }, [view, isFixedLayout, currentPageIndex, setCurrentPageIndex]);
 
+  const isGestureTurnRef = useRef(false);
+
   // Animate notes sliding in when page changes externally
   useEffect(() => {
     let timer: NodeJS.Timeout | undefined;
     if (prevPageIndexRef.current !== null && prevPageIndexRef.current !== currentPageIndex) {
-      if (dragOffset === 0 && !isAnimatingPageTurn) {
+      if (!isGestureTurnRef.current && dragOffset === 0 && !isAnimatingPageTurn) {
         const isForward = currentPageIndex > prevPageIndexRef.current;
-        setPageTurnAnimClass(isForward ? 'animate-in fade-in slide-in-from-right-8 duration-200' : 'animate-in fade-in slide-in-from-left-8 duration-200');
+        setPageTurnAnimClass(
+          isForward
+            ? 'animate-in fade-in slide-in-from-right-8 duration-200'
+            : 'animate-in fade-in slide-in-from-left-8 duration-200',
+        );
         timer = setTimeout(() => setPageTurnAnimClass(''), 220);
       }
+      isGestureTurnRef.current = false;
     }
     prevPageIndexRef.current = currentPageIndex;
     return () => {
@@ -247,6 +254,11 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     // Palm rejection: if stylusOnly is true, track touch for gestures, don't draw
     if (stylusOnly && e.pointerType === 'touch') {
       touchStartPos.current = { x: e.clientX, y: e.clientY, time: Date.now() };
+      try {
+        canvasRef.current?.setPointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
       return;
     }
 
@@ -355,6 +367,13 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
 
     // Handle touch swipe gesture when stylusOnly is active
     if (stylusOnly && e?.pointerType === 'touch' && touchStartPos.current) {
+      try {
+        if (e && canvasRef.current?.hasPointerCapture(e.pointerId)) {
+          canvasRef.current.releasePointerCapture(e.pointerId);
+        }
+      } catch {
+        // ignore
+      }
       const deltaX = e.clientX - touchStartPos.current.x;
       const deltaY = e.clientY - touchStartPos.current.y;
       const duration = Date.now() - touchStartPos.current.time;
@@ -364,23 +383,29 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       if (duration < 700 && Math.abs(deltaY) < 150) {
         if (deltaX < -50) {
           // Slide out to left -> turn forward
+          const targetPage = currentPageIndex + 1;
+          isGestureTurnRef.current = true;
           setIsAnimatingPageTurn(true);
           setDragOffset(-dimensions.width);
           view?.next();
           setTimeout(() => {
+            setCurrentPageIndex(targetPage);
             setDragOffset(0);
             setIsAnimatingPageTurn(false);
-          }, 220);
+          }, 300);
           return;
         } else if (deltaX > 50) {
           // Slide out to right -> turn backward
+          const targetPage = Math.max(0, currentPageIndex - 1);
+          isGestureTurnRef.current = true;
           setIsAnimatingPageTurn(true);
           setDragOffset(dimensions.width);
           view?.prev();
           setTimeout(() => {
+            setCurrentPageIndex(targetPage);
             setDragOffset(0);
             setIsAnimatingPageTurn(false);
-          }, 220);
+          }, 300);
           return;
         } else if (Math.abs(deltaX) < 25) {
           // Tap on center toggles navigation; margin taps are blocked
@@ -401,7 +426,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       if (dragOffset !== 0) {
         setIsAnimatingPageTurn(true);
         setDragOffset(0);
-        setTimeout(() => setIsAnimatingPageTurn(false), 200);
+        setTimeout(() => setIsAnimatingPageTurn(false), 240);
       }
       return;
     }
@@ -688,7 +713,9 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
         className={`absolute inset-0 pointer-events-none ${pageTurnAnimClass}`}
         style={{
           transform: dragOffset !== 0 ? `translateX(${dragOffset}px)` : undefined,
-          transition: isAnimatingPageTurn ? 'transform 220ms ease-out' : 'none',
+          transition: isAnimatingPageTurn
+            ? 'transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94)'
+            : 'none',
         }}
       >
         {/* Current page strokes */}
@@ -701,7 +728,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
           {renderStrokes(currentStrokes, 'curr')}
         </svg>
 
-        {/* Next page preview while dragging to the left (deltaX < 0) */}
+        {/* Next page preview while dragging or animating forward to the left (dragOffset < 0) */}
         {dragOffset < 0 && (
           <div
             className='absolute inset-0 pointer-events-none'
@@ -718,7 +745,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
           </div>
         )}
 
-        {/* Previous page preview while dragging to the right (deltaX > 0) */}
+        {/* Previous page preview while dragging or animating backward to the right (dragOffset > 0) */}
         {dragOffset > 0 && (
           <div
             className='absolute inset-0 pointer-events-none'
@@ -730,7 +757,10 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
               preserveAspectRatio='none'
             >
               {svgDefs}
-              {renderStrokes(getPageStrokes(bookHash, currentPageIndex - 1), 'prev')}
+              {renderStrokes(
+                getPageStrokes(bookHash, Math.max(0, currentPageIndex - 1)),
+                'prev',
+              )}
             </svg>
           </div>
         )}
