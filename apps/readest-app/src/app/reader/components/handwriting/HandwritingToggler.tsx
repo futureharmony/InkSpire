@@ -19,7 +19,11 @@ export const HandwritingToggler: React.FC<{ bookKey: string }> = ({ bookKey }) =
         'btn btn-ghost h-8 min-h-8 w-8 p-0 transition-colors',
         isActive && 'bg-primary/20 text-primary font-bold',
       )}
-      onClick={() => toggleHandwriting(bookKey)}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleHandwriting(bookKey);
+      }}
     >
       <LuPenTool size={iconSize18} className={isActive ? 'text-primary' : 'text-base-content'} />
     </button>

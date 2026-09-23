@@ -22,12 +22,14 @@ import { useHandwritingStore } from '@/store/handwritingStore';
 import { useThemeStore } from '@/store/themeStore';
 import { HandwritingShapeType } from '@/types/handwriting';
 import { persistPageHandwriting } from '@/services/handwritingService';
+import { Insets } from '@/types/misc';
 import HandwritingExportDialog from './HandwritingExportDialog';
 
 interface HandwritingToolbarProps {
   bookKey: string;
   containerWidth: number;
   containerHeight: number;
+  contentInsets?: Insets;
 }
 
 const COLOR_PRESETS = [
@@ -51,6 +53,7 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
   bookKey,
   containerWidth,
   containerHeight,
+  contentInsets,
 }) => {
   const _ = useTranslation();
   const { isDarkMode } = useThemeStore();
@@ -112,9 +115,19 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
   const activeColor =
     currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
 
+  const topOffset = Math.max(12, (contentInsets?.top || 0) + 8);
+
   return (
     <>
-      <div className='absolute top-3 left-1/2 -translate-x-1/2 z-45 flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-base-100/90 backdrop-blur-md shadow-2xl border border-base-300/80 animate-in fade-in slide-in-from-top-4 duration-200 select-none'>
+      <div
+        className='pointer-events-auto absolute left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-base-100/95 backdrop-blur-md shadow-2xl border border-base-300/80 animate-in fade-in slide-in-from-top-4 duration-200 select-none'
+        style={{ top: `${topOffset}px` }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onPointerMove={(e) => e.stopPropagation()}
+        onPointerUp={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Tool Selector Group */}
         <div className='flex items-center gap-1 bg-base-200/60 p-1 rounded-xl'>
           {/* 钢笔 Fountain Pen */}

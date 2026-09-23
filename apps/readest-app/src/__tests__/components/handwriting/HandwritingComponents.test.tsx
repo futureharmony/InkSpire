@@ -90,13 +90,20 @@ describe('Handwriting UI Components', () => {
     it('renders toolbar when active and allows tool switching', () => {
       useHandwritingStore.getState().toggleHandwriting(bookKey, true);
 
-      const { getByTitle } = render(
+      const { getByTitle, container } = render(
         <HandwritingToolbar
           bookKey={bookKey}
           containerWidth={800}
           containerHeight={1200}
+          contentInsets={{ top: 60, right: 0, bottom: 40, left: 0 }}
         />,
       );
+
+      // Verify pointer events and z-index on toolbar root
+      const toolbarRoot = container.firstChild as HTMLElement;
+      expect(toolbarRoot.className).toContain('pointer-events-auto');
+      expect(toolbarRoot.className).toContain('z-50');
+      expect(toolbarRoot.style.top).toBe('68px');
 
       // Switch to pencil
       const pencilBtn = getByTitle('Pencil (Textured & Light)');
@@ -127,7 +134,7 @@ describe('Handwriting UI Components', () => {
   });
 
   describe('HandwritingLayer', () => {
-    it('renders SVG overlay and canvas container', () => {
+    it('renders SVG overlay and canvas container with z-20', () => {
       const { container } = render(
         <HandwritingLayer
           bookKey={bookKey}
@@ -135,6 +142,8 @@ describe('Handwriting UI Components', () => {
         />,
       );
 
+      const layerRoot = container.firstChild as HTMLElement;
+      expect(layerRoot.className).toContain('z-20');
       expect(container.querySelector('svg')).toBeDefined();
       expect(container.querySelector('canvas')).toBeDefined();
     });

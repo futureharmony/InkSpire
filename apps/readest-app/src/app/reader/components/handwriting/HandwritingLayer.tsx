@@ -36,6 +36,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const currentStrokePoints = useRef<HandwritingPoint[]>([]);
   const isDrawing = useRef(false);
+  const touchStartPos = useRef<{ x: number; y: number; time: number } | null>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 1200 });
 
   const bookHash = bookKey.split('-')[0]!;
@@ -136,8 +137,9 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isActive) return;
 
-    // Palm rejection: if stylusOnly is true, ignore touch events
+    // Palm rejection: if stylusOnly is true, track touch for gestures, don't draw
     if (stylusOnly && e.pointerType === 'touch') {
+      touchStartPos.current = { x: e.clientX, y: e.clientY, time: Date.now() };
       return;
     }
 
@@ -231,7 +233,45 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   };
 
   const finishDrawing = (e?: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!isActive || !isDrawing.current) return;
+    if (!isActive) return;
+
+    // Handle touch gestures when stylusOnly is active
+    if (stylusOnly && e?.pointerType === 'touch' && touchStartPos.current) {
+      const deltaX = e.clientX - touchStartPos.current.x;
+      const deltaY = e.clientY - touchStartPos.current.y;
+      const duration = Date.now() - touchStartPos.current.time;
+      touchStartPos.current = null;
+
+      // Quick tap or swipe
+      if (duration < 600 && Math.abs(deltaY) < 120) {
+        if (deltaX < -50) {
+          view?.next();
+          return;
+        } else if (deltaX > 50) {
+          view?.prev();
+          return;
+        } else if (Math.abs(deltaX) < 25) {
+          const rect = canvasRef.current?.getBoundingClientRect();
+          if (rect) {
+            const relX = (e.clientX - rect.left) / rect.width;
+            if (relX > 0.75) {
+              view?.next();
+              return;
+            } else if (relX < 0.25) {
+              view?.prev();
+              return;
+            } else {
+              const hovered = useReaderStore.getState().hoveredBookKey;
+              useReaderStore.getState().setHoveredBookKey(hovered === bookKey ? '' : bookKey);
+              return;
+            }
+          }
+        }
+      }
+      return;
+    }
+
+    if (!isDrawing.current) return;
     isDrawing.current = false;
 
     const canvas = canvasRef.current;
@@ -296,7 +336,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   return (
     <div
       ref={containerRef}
-      className='absolute inset-0 pointer-events-none z-30 overflow-hidden'
+      className='absolute inset-0 pointer-events-none z-20 overflow-hidden'
       style={{
         paddingTop: contentInsets.top,
         paddingRight: contentInsets.right,
@@ -450,6 +490,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
         bookKey={bookKey}
         containerWidth={width}
         containerHeight={height}
+        contentInsets={contentInsets}
       />
     </div>
   );

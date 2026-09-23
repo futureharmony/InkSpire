@@ -200,7 +200,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
         role='none'
         tabIndex={-1}
         className={clsx(
-          'absolute top-0 z-10 w-full',
+          'absolute top-0 z-40 w-full',
           isMobile || pointerInDoc ? 'pointer-events-none' : 'pointer-events-auto',
         )}
         style={{ height: `${triggerHeight}px` }}
@@ -210,7 +210,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
       />
       <div
         className={clsx(
-          'bg-base-100 absolute left-0 right-0 top-0 z-10',
+          'bg-base-100 absolute left-0 right-0 top-0 z-40',
           appService?.hasRoundedWindow && 'rounded-window-top-right',
           isHeaderVisible ? 'visible' : 'hidden',
         )}
@@ -223,7 +223,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
         role='banner'
         aria-label={_('Header Bar')}
         className={clsx(
-          `header-bar bg-base-100 absolute top-0 z-10 flex h-11 w-full items-center pr-4`,
+          `header-bar bg-base-100 absolute top-0 z-40 flex h-11 w-full items-center pr-4`,
           `shadow-xs transition-[opacity,margin-top] duration-300`,
           trafficLightInHeader ? 'pl-20' : isSideBarVisible ? 'ps-4' : 'ps-4 sm:ps-1.5',
           appService?.hasRoundedWindow && 'rounded-window-top-right',
