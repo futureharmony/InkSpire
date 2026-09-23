@@ -41,6 +41,8 @@ Entitlements*.plist
 
 # local confs
 tauri.*.conf.json
+# tracked exception: the direct-distribution iCloud overlay ships in the repo
+!tauri.macos-nonestore.conf.json
 
 # vercel
 .vercel
@@ -58,6 +60,9 @@ next-env.d.ts
 
 #generated
 src-tauri/gen
+
+# local dev overrides (personal signing, etc.)
+src-tauri/tauri.*.local.json
 
 # vendor
 /public/vendor

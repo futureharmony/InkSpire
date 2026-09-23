@@ -110,6 +110,7 @@ describe('EdgeTTSClient Web Audio playback', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -156,7 +157,7 @@ describe('EdgeTTSClient Web Audio playback', () => {
 
   test('chunks are scheduled with a rate-scaled gap and no element restarts', async () => {
     const client = await startClient();
-    await client.setRate(1); // gap = 0.15 / 1
+    await client.setRate(1); // default gap, unscaled at 1.0x
     const { done } = collectSpeak(client, new AbortController().signal);
     await flush();
     await flush();
@@ -164,6 +165,47 @@ describe('EdgeTTSClient Web Audio playback', () => {
     expect(second!.startedAt! - first!.endTime).toBeCloseTo(0.15, 5);
     await ctx().advanceTo(5);
     await done;
+  });
+
+  test('the gap it is given is scheduled as-is at a faster rate', async () => {
+    const client = await startClient();
+    await client.setRate(2);
+    // The gap arrives already scaled for 2x (see scaleGapForRate). Scaling it
+    // again here left 0.05s between sentences and ran them together (#5750).
+    client.setSentenceGap(0.1);
+    const { done } = collectSpeak(client, new AbortController().signal);
+    await flush();
+    await flush();
+    const [first, second] = ctx().sources;
+    expect(second!.startedAt! - first!.endTime).toBeCloseTo(0.1, 5);
+    await ctx().advanceTo(5);
+    await done;
+  });
+
+  test('the next paragraph starts a pause after the last one, not after its synthesis', async () => {
+    // One speak() is one paragraph. The pause between them belongs on the
+    // audio clock, so a slow synthesis eats into it instead of adding to it —
+    // that is what made paragraph pauses swing with the network (#5750).
+    parsedMarks = [{ name: '0', text: 'Only sentence.', language: 'en' }];
+    const client = await startClient();
+    await client.setRate(1);
+    client.setParagraphGap(0.3);
+
+    const { done } = collectSpeak(client, new AbortController().signal);
+    await flush();
+    await flush();
+    const first = ctx().sources[0]!;
+    await ctx().advanceTo(1.03); // starts at 0.03, 1s long
+    await done;
+
+    const { done: nextDone } = collectSpeak(client, new AbortController().signal);
+    await flush();
+    await flush();
+    const second = ctx().sources[1]!;
+    expect(second.startedAt! - first.endTime).toBeCloseTo(0.3, 5);
+
+    await ctx().advanceTo(5);
+    await nextDone;
   });
 
   test('setSentenceGap before speaking changes the observed gap', async () => {
@@ -334,12 +376,25 @@ describe('EdgeTTSClient Web Audio playback', () => {
     expect(codes).not.toContain('boundary');
   });
 
-  test('a hard fetch error yields error and terminates', async () => {
+  test('a sustained run of hard fetch errors terminates the session (bounded skip)', async () => {
+    // A non-permanent (network) error skips the sentence so cached neighbours
+    // can still play — a cached chapter whose heading is uncached must not stop
+    // on the heading. But a RUN of consecutive unreachable sentences, with no
+    // cached hit to reset the budget, stops instead of skipping to the end of
+    // the book. Enough failing marks to exceed the budget, so the session ends
+    // with 'error' rather than wedging in 'playing'.
+    parsedMarks = Array.from({ length: 6 }, (_, i) => ({
+      name: String(i),
+      text: `Sentence ${i}.`,
+      language: 'en',
+    }));
     createAudioDataBehavior = async () => {
       throw new Error('network exploded');
     };
     const client = await startClient();
+    vi.useFakeTimers();
     const { events, done } = collectSpeak(client, new AbortController().signal);
+    await vi.runAllTimersAsync();
     await done;
     expect(events.at(-1)).toMatchObject({ code: 'error', message: 'network exploded' });
   }, 10000);

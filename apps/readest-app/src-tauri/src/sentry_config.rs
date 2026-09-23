@@ -114,8 +114,9 @@ pub fn is_mobi_cover_panic_frame(function: &str) -> bool {
     function.contains("mobi_parser::extract_cover")
 }
 
-/// The WebView (engine, major-version), set once at startup when the app reports
-/// its User-Agent. Stored globally so `before_send` can tag every event — the
+/// The WebView engine + version, set once at startup — the version prefers the
+/// runtime's own query and falls back to the major parsed from the User-Agent.
+/// Stored globally so `before_send` can tag every event — the
 /// browser context integration doesn't run for events forwarded from the webview.
 static WEBVIEW_INFO: std::sync::OnceLock<(String, String)> = std::sync::OnceLock::new();
 
@@ -177,6 +178,46 @@ mod tests {
         android_version_from_uname, corrected_os_name, dsn_from_env, environment_for_version,
         is_ignored_browser_error, is_mobi_cover_panic_frame, parse_webview_info, release_name,
     };
+
+    /// `tauri-plugin-sentry`'s `minidump` feature pulls in sentry-rust-minidump ->
+    /// minidumper-child -> crash-handler, and it starts its crash-reporter server
+    /// by re-exec'ing our own main executable with `--crash-reporter-server`. That
+    /// one behavior broke the app at launch three times: the re-exec'd process
+    /// booted a whole second copy of the app whenever its server failed to start
+    /// (#5052), a sandboxed App Store build can never re-exec itself so it aborted
+    /// in dyld before `main()` (#5053), and crash-handler's `pthread_create`
+    /// interposer panics on 32-bit ARM, aborting every armeabi-v7a device (#5070).
+    /// It bought ~49 native crash events a month, nearly all unsymbolicated WebView
+    /// frames. Sentry still reports Rust panics, WebView errors and native mobile
+    /// crashes without it, so the feature stays off on every target. Bringing native
+    /// desktop dumps back means shipping a *separate* helper binary, never a re-exec
+    /// of our own.
+    #[test]
+    fn minidump_feature_is_enabled_on_no_target() {
+        let manifest = include_str!("../Cargo.toml");
+        let deps: Vec<&str> = manifest
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("tauri-plugin-sentry"))
+            .collect();
+
+        assert!(
+            !deps.is_empty(),
+            "tauri-plugin-sentry must be declared in Cargo.toml"
+        );
+        for dep in deps {
+            assert!(
+                dep.contains("default-features = false"),
+                "tauri-plugin-sentry must set default-features = false: its default \
+                 feature set is [\"minidump\"] (#5052/#5053/#5070); found: {dep}"
+            );
+            assert!(
+                !dep.contains("minidump"),
+                "the minidump feature must stay off on every target \
+                 (#5052/#5053/#5070); found: {dep}"
+            );
+        }
+    }
 
     #[test]
     fn dsn_is_none_when_unset_or_blank() {
