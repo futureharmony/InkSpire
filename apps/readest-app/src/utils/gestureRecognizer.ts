@@ -72,6 +72,39 @@ export function detectScratchOutGesture(
     return { isScratch: false };
   }
 
+  // Guard 1: If stroke forms a closed loop, it is a Circle-to-Clip / Lasso gesture, NEVER a scratch-out
+  const loop = detectClosedLoopGesture(points, width, height);
+  if (loop.isClosedLoop) {
+    return { isScratch: false };
+  }
+
+  const n = points.length;
+
+  // Guard 2: An enclosing 2D shape (circle, ellipse, polygon) encloses a large 2D area (ratio >= 0.18).
+  // A scratch-out is a 1D back-and-forth zigzag whose overlapping sweeps cancel out (ratio < 0.12).
+  let shoelaceSum = 0;
+  for (let i = 0; i < n; i++) {
+    const nextIdx = (i + 1) % n;
+    const xi = points[i]!.x * width;
+    const yi = points[i]!.y * height;
+    const xNext = points[nextIdx]!.x * width;
+    const yNext = points[nextIdx]!.y * height;
+    shoelaceSum += xi * yNext - xNext * yi;
+  }
+  const enclosedArea = Math.abs(shoelaceSum) / 2;
+  const boxArea = boxW * boxH;
+  if (boxArea > 0 && enclosedArea / boxArea >= 0.18) {
+    return { isScratch: false };
+  }
+
+  // Guard 3: If start and end points meet or come close and the stroke encloses non-trivial area, it's a loop/bubble
+  const p0 = points[0]!;
+  const pN = points[n - 1]!;
+  const startEndDist = Math.hypot((pN.x - p0.x) * width, (pN.y - p0.y) * height);
+  if (startEndDist < Math.max(35, (boxW + boxH) * 0.35) && enclosedArea > 600) {
+    return { isScratch: false };
+  }
+
   // Track reversals across both X and Y axes (alternating back-and-forth scribbles)
   let reversalsX = 0;
   let prevDirX = 0;
@@ -109,11 +142,11 @@ export function detectScratchOutGesture(
     }
   }
 
-  const isHorizontalScratch = reversalsX >= 3 && totalHorizontalTravel >= boxW * 1.3;
-  const isVerticalScratch = reversalsY >= 3 && totalVerticalTravel >= boxH * 1.3;
+  const isHorizontalScratch = reversalsX >= 4 && totalHorizontalTravel >= boxW * 1.6;
+  const isVerticalScratch = reversalsY >= 4 && totalVerticalTravel >= boxH * 1.6;
   const isDiagonalScratch =
-    reversalsX + reversalsY >= 4 &&
-    totalHorizontalTravel + totalVerticalTravel >= Math.hypot(boxW, boxH) * 1.3;
+    reversalsX + reversalsY >= 6 &&
+    totalHorizontalTravel + totalVerticalTravel >= Math.hypot(boxW, boxH) * 1.8;
 
   if (isHorizontalScratch || isVerticalScratch || isDiagonalScratch) {
     // Proportional comfortable padding to cover erased strokes cleanly

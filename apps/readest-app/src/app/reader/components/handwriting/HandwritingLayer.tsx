@@ -538,56 +538,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
     const points = currentStrokePoints.current;
     if (points.length === 0) return;
 
-    // 1. Gesture Recognition: Scratch-out to Erase
-    const scratch = detectScratchOutGesture(points, dimensions.width, dimensions.height);
-    if (scratch.isScratch && scratch.bbox) {
-      const { minX, minY, maxX, maxY } = scratch.bbox;
-      const strokes = getPageStrokes(bookHash, currentPageIndex);
-      const remainingStrokes = strokes.filter((s) => {
-        for (let i = 0; i < s.points.length; i++) {
-          const pt = s.points[i]!;
-          if (pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY) {
-            return false;
-          }
-          if (i > 0) {
-            const prev = s.points[i - 1]!;
-            if (segmentIntersectsBox(prev, pt, minX, minY, maxX, maxY)) {
-              return false;
-            }
-          }
-        }
-        return true;
-      });
-
-      if (remainingStrokes.length !== strokes.length) {
-        setPageStrokes(bookHash, currentPageIndex, remainingStrokes);
-        persistPageHandwriting(
-          bookKey,
-          bookHash,
-          currentPageIndex,
-          remainingStrokes,
-          progress?.location,
-          undefined,
-          dimensions.height > 0 ? dimensions.width / dimensions.height : undefined,
-        );
-        schedulePageSnapshot(currentPageIndex);
-      }
-
-      const currentSticky = getStickyNotes(bookHash, currentPageIndex);
-      const remainingSticky = currentSticky.filter(
-        (n) => !(n.x >= minX - 0.05 && n.x <= maxX && n.y >= minY - 0.05 && n.y <= maxY),
-      );
-      if (remainingSticky.length !== currentSticky.length) {
-        persistPageStickyNotes(bookHash, currentPageIndex, remainingSticky);
-      }
-
-      currentStrokePoints.current = [];
-      const ctx = canvas?.getContext('2d');
-      ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
-      return;
-    }
-
-    // 2. Gesture Recognition: Circle to Clip / Margin Sticky Note Card
+    // 1. Gesture Recognition: Circle to Clip / Margin Sticky Note Card
     const loop = detectClosedLoopGesture(points, dimensions.width, dimensions.height);
     if (loop.isClosedLoop) {
       const extracted = extractTextFromStroke(points, dimensions.width, dimensions.height, view);
@@ -636,6 +587,47 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
         ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
         return;
       }
+    }
+
+    // 2. Gesture Recognition: Scratch-out to Erase (targets ink strokes)
+    const scratch = detectScratchOutGesture(points, dimensions.width, dimensions.height);
+    if (scratch.isScratch && scratch.bbox) {
+      const { minX, minY, maxX, maxY } = scratch.bbox;
+      const strokes = getPageStrokes(bookHash, currentPageIndex);
+      const remainingStrokes = strokes.filter((s) => {
+        for (let i = 0; i < s.points.length; i++) {
+          const pt = s.points[i]!;
+          if (pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY) {
+            return false;
+          }
+          if (i > 0) {
+            const prev = s.points[i - 1]!;
+            if (segmentIntersectsBox(prev, pt, minX, minY, maxX, maxY)) {
+              return false;
+            }
+          }
+        }
+        return true;
+      });
+
+      if (remainingStrokes.length !== strokes.length) {
+        setPageStrokes(bookHash, currentPageIndex, remainingStrokes);
+        persistPageHandwriting(
+          bookKey,
+          bookHash,
+          currentPageIndex,
+          remainingStrokes,
+          progress?.location,
+          undefined,
+          dimensions.height > 0 ? dimensions.width / dimensions.height : undefined,
+        );
+        schedulePageSnapshot(currentPageIndex);
+      }
+
+      currentStrokePoints.current = [];
+      const ctx = canvas?.getContext('2d');
+      ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
+      return;
     }
 
     // Lasso text selection mode: inspect underlying text and summon menu

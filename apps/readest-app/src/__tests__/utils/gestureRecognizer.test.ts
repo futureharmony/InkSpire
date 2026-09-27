@@ -76,6 +76,55 @@ describe('gestureRecognizer', () => {
       const result = detectScratchOutGesture(points, width, height);
       expect(result.isScratch).toBe(false);
     });
+
+    it('never detects a circular or lasso loop as scratch-out', () => {
+      const width = 1000;
+      const height = 1500;
+      const cx = 0.3;
+      const cy = 0.4;
+      const rx = 0.1;
+      const ry = 0.08;
+      const n = 28;
+      const points: HandwritingPoint[] = [];
+
+      for (let i = 0; i < n; i++) {
+        const theta = (i / (n - 1)) * 2 * Math.PI;
+        points.push({
+          x: cx + rx * Math.cos(theta),
+          y: cy + ry * Math.sin(theta),
+          time: Date.now() + i * 20,
+        });
+      }
+
+      const result = detectScratchOutGesture(points, width, height);
+      expect(result.isScratch).toBe(false);
+    });
+
+    it('rejects wobbly hand-drawn loops with slight tremors as scratch-out', () => {
+      const width = 1000;
+      const height = 1500;
+      const cx = 0.3;
+      const cy = 0.4;
+      const rx = 0.1;
+      const ry = 0.08;
+      const n = 32;
+      const points: HandwritingPoint[] = [];
+
+      for (let i = 0; i < n; i++) {
+        const theta = (i / (n - 1)) * 2 * Math.PI;
+        // Introduce small jitter/tremor typical of hand-drawn circles
+        const jitterX = (i % 2 === 0 ? 0.003 : -0.003);
+        const jitterY = (i % 3 === 0 ? 0.003 : -0.003);
+        points.push({
+          x: cx + rx * Math.cos(theta) + jitterX,
+          y: cy + ry * Math.sin(theta) + jitterY,
+          time: Date.now() + i * 15,
+        });
+      }
+
+      const result = detectScratchOutGesture(points, width, height);
+      expect(result.isScratch).toBe(false);
+    });
   });
 
   describe('detectClosedLoopGesture', () => {
