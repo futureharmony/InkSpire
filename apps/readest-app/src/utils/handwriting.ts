@@ -446,7 +446,7 @@ export function renderStrokeToCanvas(
     }
   } else if (stroke.tool === 'pencil') {
     // Graphite pencil: relatively finer stroke + authentic graphite texture
-    const pencilWidth = Math.max(0.6, baseWidth * 0.5);
+    const pencilWidth = Math.max(0.65, baseWidth * 0.52);
     ctx.strokeStyle = stroke.color;
     ctx.lineWidth = pencilWidth;
     ctx.globalAlpha = (stroke.opacity || 0.78) * 0.85;
@@ -468,16 +468,22 @@ export function renderStrokeToCanvas(
     ctx.lineTo(last.x * width, last.y * height);
     ctx.stroke();
 
-    // Subtle graphite paper texture grain
+    // Subtle graphite paper texture grain & shading
     ctx.fillStyle = stroke.color;
-    ctx.globalAlpha = 0.22;
-    for (let i = 0; i < points.length; i += 2) {
+    for (let i = 0; i < points.length; i++) {
       const pt = points[i]!;
       const px = pt.x * width;
       const py = pt.y * height;
-      const noiseX = Math.sin(px * 12.9898 + py * 78.233) * pencilWidth * 0.45;
-      const noiseY = Math.cos(px * 93.9898 + py * 67.345) * pencilWidth * 0.45;
-      ctx.fillRect(px + noiseX, py + noiseY, 0.9, 0.9);
+      const pr = pt.pressure ?? 0.5;
+      ctx.globalAlpha = Math.min(0.45, 0.15 + 0.3 * pr);
+      const noiseX = Math.sin(px * 12.9898 + py * 78.233) * pencilWidth * 0.6;
+      const noiseY = Math.cos(px * 93.9898 + py * 67.345) * pencilWidth * 0.6;
+      ctx.fillRect(px + noiseX, py + noiseY, 0.85, 0.85);
+      if (pr > 0.6) {
+        const noise2X = Math.sin(px * 37.1 + py * 51.7) * pencilWidth * 0.4;
+        const noise2Y = Math.cos(px * 83.3 + py * 29.1) * pencilWidth * 0.4;
+        ctx.fillRect(px + noise2X, py + noise2Y, 0.8, 0.8);
+      }
     }
   } else {
     // Highlighter / Watercolor
@@ -545,6 +551,56 @@ export function strokeToSvgPath(stroke: HandwritingStroke, width: number, height
   return d;
 }
 
+/** Subdivide and smooth points using Catmull-Rom spline for silky calligraphic curves */
+export function interpolateCatmullRom(
+  points: HandwritingPoint[],
+  maxSegmentPx = 6,
+  width: number,
+  height: number,
+): HandwritingPoint[] {
+  if (points.length < 3) return points;
+  const result: HandwritingPoint[] = [points[0]!];
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[Math.max(0, i - 1)]!;
+    const p1 = points[i]!;
+    const p2 = points[i + 1]!;
+    const p3 = points[Math.min(points.length - 1, i + 2)]!;
+
+    const dist = Math.hypot((p2.x - p1.x) * width, (p2.y - p1.y) * height);
+    const steps = Math.max(1, Math.min(6, Math.floor(dist / maxSegmentPx)));
+
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps;
+      const t2 = t * t;
+      const t3 = t2 * t;
+
+      const x =
+        0.5 *
+        (2 * p1.x +
+          (-p0.x + p2.x) * t +
+          (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
+          (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3);
+
+      const y =
+        0.5 *
+        (2 * p1.y +
+          (-p0.y + p2.y) * t +
+          (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
+          (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3);
+
+      const p1Press = p1.pressure ?? 0.5;
+      const p2Press = p2.pressure ?? 0.5;
+      const pressure = p1Press + t * (p2Press - p1Press);
+      const time = (p1.time ?? 0) + t * ((p2.time ?? 0) - (p1.time ?? 0));
+
+      result.push({ x, y, pressure, time });
+    }
+  }
+
+  return result;
+}
+
 /**
  * Generate a calligraphic filled outline SVG path for a fountain pen stroke,
  * accurately simulating flexible nib angle, pressure dynamics, velocity, and tapering.
@@ -554,19 +610,23 @@ export function strokeToCalligraphicPath(
   width: number,
   height: number,
 ): string {
-  const points = stroke.points;
-  if (points.length === 0) return '';
+  const rawPoints = stroke.points;
+  if (rawPoints.length === 0) return '';
 
   const strokeScale = width / REFERENCE_WIDTH;
   const baseWidth = Math.max(1.2, stroke.width * strokeScale);
 
-  if (points.length === 1) {
-    const p = points[0]!;
+  if (rawPoints.length === 1) {
+    const p = rawPoints[0]!;
     const px = (p.x * width).toFixed(1);
     const py = (p.y * height).toFixed(1);
     const r = Math.max(0.8, (baseWidth * (0.45 + 0.65 * (p.pressure ?? 0.5))) / 2).toFixed(1);
     return `M ${px} ${py} m -${r}, 0 a ${r},${r} 0 1,0 ${(Number(r) * 2).toFixed(1)},0 a ${r},${r} 0 1,0 -${(Number(r) * 2).toFixed(1)},0 Z`;
   }
+
+  // Smooth points with Catmull-Rom spline interpolation if sufficiently spaced
+  const points =
+    rawPoints.length >= 3 ? interpolateCatmullRom(rawPoints, 6, width, height) : rawPoints;
 
   const n = points.length;
   const pxs = new Float32Array(n);
@@ -792,9 +852,10 @@ export function strokesToSvg(
 
   const defs = `<defs>
     <filter id="inkspire-pencil-grain" x="-20%" y="-20%" width="140%" height="140%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="3" result="noise" />
-      <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.2" xChannelSelector="R" yChannelSelector="G" result="displaced" />
-      <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.85 0" in="displaced" />
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" result="noise" />
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.4" xChannelSelector="R" yChannelSelector="G" result="displaced" />
+      <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.88 0" in="displaced" result="grain" />
+      <feBlend in="SourceGraphic" in2="grain" mode="multiply" />
     </filter>
   </defs>`;
 

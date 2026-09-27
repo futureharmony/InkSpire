@@ -550,6 +550,125 @@ describe('Handwriting UI Components', () => {
       const strokesAfter = useHandwritingStore.getState().getPageStrokes(bookHash, 0);
       expect(strokesAfter.length).toBe(2);
     });
+
+    it('renders highlighters in dedicated underlay group with mixBlendMode', () => {
+      const bookKey = 'underlay-test';
+      const bookHash = 'underlay';
+      useHandwritingStore.getState().toggleHandwriting(bookKey, true);
+      useHandwritingStore.getState().setCurrentPageIndex(0);
+
+      const highlighterStroke: HandwritingStroke = {
+        id: 'hl-1',
+        tool: 'highlighter',
+        color: '#facc15',
+        width: 12,
+        opacity: 0.35,
+        pageIndex: 0,
+        createdAt: 1000,
+        updatedAt: 1000,
+        points: [
+          { x: 0.1, y: 0.2 },
+          { x: 0.5, y: 0.2 },
+        ],
+      };
+      useHandwritingStore.getState().addStroke(bookHash, 0, highlighterStroke);
+
+      const { container } = render(
+        <HandwritingLayer
+          bookKey={bookKey}
+          contentInsets={{ top: 0, right: 0, bottom: 0, left: 0 }}
+        />,
+      );
+
+      const underlayGroup = container.querySelector('#curr-highlighters-underlay');
+      expect(underlayGroup).not.toBeNull();
+      expect(underlayGroup?.getAttribute('style')).toContain('mix-blend-mode: multiply');
+      expect(underlayGroup?.querySelector('path')).not.toBeNull();
+    });
+
+    it('erases intersecting strokes when drawing a scratch-out gesture', () => {
+      const bookKey = 'scratch-layer-test';
+      const bookHash = 'scratch';
+      useHandwritingStore.getState().toggleHandwriting(bookKey, true);
+      useHandwritingStore.getState().setTool('pen');
+      useHandwritingStore.getState().setCurrentPageIndex(0);
+
+      // Existing stroke to be erased
+      const strokeToErase: HandwritingStroke = {
+        id: 'target-stroke',
+        tool: 'pen',
+        color: '#000000',
+        width: 4,
+        opacity: 1,
+        pageIndex: 0,
+        createdAt: 1000,
+        updatedAt: 1000,
+        points: [
+          { x: 0.2, y: 0.3 },
+          { x: 0.25, y: 0.3 },
+        ],
+      };
+      useHandwritingStore.getState().addStroke(bookHash, 0, strokeToErase);
+      expect(useHandwritingStore.getState().getPageStrokes(bookHash, 0).length).toBe(1);
+
+      const { container } = render(
+        <HandwritingLayer
+          bookKey={bookKey}
+          contentInsets={{ top: 0, right: 0, bottom: 0, left: 0 }}
+        />,
+      );
+
+      const canvas = container.querySelector('canvas')!;
+      canvas.getBoundingClientRect = () => ({
+        left: 0,
+        top: 0,
+        width: 1000,
+        height: 1000,
+        right: 1000,
+        bottom: 1000,
+        x: 0,
+        y: 0,
+        toJSON: () => {},
+      });
+
+      // Pointer down at (180, 300)
+      fireEvent.pointerDown(canvas, {
+        clientX: 180,
+        clientY: 300,
+        pointerType: 'pen',
+        pressure: 0.5,
+      });
+
+      // Rapid back-and-forth zig-zags over target stroke
+      const zigzags = [
+        { clientX: 280, clientY: 302 },
+        { clientX: 185, clientY: 304 },
+        { clientX: 275, clientY: 306 },
+        { clientX: 190, clientY: 308 },
+        { clientX: 270, clientY: 310 },
+        { clientX: 195, clientY: 312 },
+        { clientX: 265, clientY: 314 },
+      ];
+
+      for (const pt of zigzags) {
+        fireEvent.pointerMove(canvas, {
+          ...pt,
+          pointerType: 'pen',
+          pressure: 0.5,
+        });
+      }
+
+      fireEvent.pointerUp(canvas, {
+        clientX: 265,
+        clientY: 314,
+        pointerType: 'pen',
+        pressure: 0.5,
+      });
+
+      // Target stroke should be erased, and the scratch stroke should NOT be added
+      const strokesAfter = useHandwritingStore.getState().getPageStrokes(bookHash, 0);
+      expect(strokesAfter.length).toBe(0);
+    });
   });
 
   describe('HandwritingOverviewDialog & Query Engine', () => {
