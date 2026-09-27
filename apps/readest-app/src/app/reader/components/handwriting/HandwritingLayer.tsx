@@ -589,45 +589,48 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
       }
     }
 
-    // 2. Gesture Recognition: Scratch-out to Erase (targets ink strokes)
-    const scratch = detectScratchOutGesture(points, dimensions.width, dimensions.height);
-    if (scratch.isScratch && scratch.bbox) {
-      const { minX, minY, maxX, maxY } = scratch.bbox;
-      const strokes = getPageStrokes(bookHash, currentPageIndex);
-      const remainingStrokes = strokes.filter((s) => {
-        for (let i = 0; i < s.points.length; i++) {
-          const pt = s.points[i]!;
-          if (pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY) {
-            return false;
-          }
-          if (i > 0) {
-            const prev = s.points[i - 1]!;
-            if (segmentIntersectsBox(prev, pt, minX, minY, maxX, maxY)) {
+    // 2. Gesture Recognition: Scratch-out to Erase (temporarily disabled per user request)
+    const ENABLE_SCRATCH_OUT_GESTURE = false;
+    if (ENABLE_SCRATCH_OUT_GESTURE) {
+      const scratch = detectScratchOutGesture(points, dimensions.width, dimensions.height);
+      if (scratch.isScratch && scratch.bbox) {
+        const { minX, minY, maxX, maxY } = scratch.bbox;
+        const strokes = getPageStrokes(bookHash, currentPageIndex);
+        const remainingStrokes = strokes.filter((s) => {
+          for (let i = 0; i < s.points.length; i++) {
+            const pt = s.points[i]!;
+            if (pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY) {
               return false;
             }
+            if (i > 0) {
+              const prev = s.points[i - 1]!;
+              if (segmentIntersectsBox(prev, pt, minX, minY, maxX, maxY)) {
+                return false;
+              }
+            }
           }
+          return true;
+        });
+
+        if (remainingStrokes.length !== strokes.length) {
+          setPageStrokes(bookHash, currentPageIndex, remainingStrokes);
+          persistPageHandwriting(
+            bookKey,
+            bookHash,
+            currentPageIndex,
+            remainingStrokes,
+            progress?.location,
+            undefined,
+            dimensions.height > 0 ? dimensions.width / dimensions.height : undefined,
+          );
+          schedulePageSnapshot(currentPageIndex);
         }
-        return true;
-      });
 
-      if (remainingStrokes.length !== strokes.length) {
-        setPageStrokes(bookHash, currentPageIndex, remainingStrokes);
-        persistPageHandwriting(
-          bookKey,
-          bookHash,
-          currentPageIndex,
-          remainingStrokes,
-          progress?.location,
-          undefined,
-          dimensions.height > 0 ? dimensions.width / dimensions.height : undefined,
-        );
-        schedulePageSnapshot(currentPageIndex);
+        currentStrokePoints.current = [];
+        const ctx = canvas?.getContext('2d');
+        ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
+        return;
       }
-
-      currentStrokePoints.current = [];
-      const ctx = canvas?.getContext('2d');
-      ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
-      return;
     }
 
     // Lasso text selection mode: inspect underlying text and summon menu
