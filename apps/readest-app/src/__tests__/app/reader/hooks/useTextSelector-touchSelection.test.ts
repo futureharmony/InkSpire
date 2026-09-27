@@ -255,4 +255,3 @@ describe('pen drag selection', () => {
     });
   });
 });
-

@@ -79,23 +79,11 @@ describe('Handwriting Utils', () => {
       const height = 1000;
 
       // Point directly on the line at (150, 150)
-      const hit = strokeIntersectsEraser(
-        stroke,
-        { x: 0.15, y: 0.15 },
-        width,
-        height,
-        16,
-      );
+      const hit = strokeIntersectsEraser(stroke, { x: 0.15, y: 0.15 }, width, height, 16);
       expect(hit).toBe(true);
 
       // Point far away at (800, 800)
-      const miss = strokeIntersectsEraser(
-        stroke,
-        { x: 0.8, y: 0.8 },
-        width,
-        height,
-        16,
-      );
+      const miss = strokeIntersectsEraser(stroke, { x: 0.8, y: 0.8 }, width, height, 16);
       expect(miss).toBe(false);
     });
 
@@ -120,14 +108,10 @@ describe('Handwriting Utils', () => {
       const height = 1000;
 
       // Top edge at y=100, x=300
-      expect(
-        strokeIntersectsEraser(stroke, { x: 0.3, y: 0.1 }, width, height, 10),
-      ).toBe(true);
+      expect(strokeIntersectsEraser(stroke, { x: 0.3, y: 0.1 }, width, height, 10)).toBe(true);
 
       // Inside center (hollow) -> miss
-      expect(
-        strokeIntersectsEraser(stroke, { x: 0.3, y: 0.3 }, width, height, 10),
-      ).toBe(false);
+      expect(strokeIntersectsEraser(stroke, { x: 0.3, y: 0.3 }, width, height, 10)).toBe(false);
     });
 
     test('snaps line to horizontal or vertical when angle is close', () => {
@@ -305,13 +289,12 @@ describe('Handwriting Utils', () => {
         ],
       };
 
-      const anchor = extractTextAnchorForStroke(
-        mockView,
-        stroke,
-        1000,
-        1000,
-        { left: 0, top: 0, width: 1000, height: 1000 },
-      );
+      const anchor = extractTextAnchorForStroke(mockView, stroke, 1000, 1000, {
+        left: 0,
+        top: 0,
+        width: 1000,
+        height: 1000,
+      });
 
       expect(anchor).toBeDefined();
       expect(anchor?.textSnippet).toContain('digital handwriting');
@@ -413,5 +396,3 @@ describe('Handwriting Utils', () => {
     });
   });
 });
-
-

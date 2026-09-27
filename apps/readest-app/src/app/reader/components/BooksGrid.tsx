@@ -185,10 +185,7 @@ const BookCellInner: React.FC<BookCellProps> = ({
             gridInsets={gridInsets}
             contentInsets={contentInsets}
           />
-          <HandwritingLayer
-            bookKey={bookKey}
-            contentInsets={contentInsets}
-          />
+          <HandwritingLayer bookKey={bookKey} contentInsets={contentInsets} />
         </div>
         {viewSettings.vertical && viewSettings.scrolled && (
           <>

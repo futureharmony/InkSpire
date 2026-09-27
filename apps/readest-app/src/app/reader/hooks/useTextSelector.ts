@@ -730,13 +730,7 @@ export const useTextSelector = (
     // Digital pen handwriting / drag-to-select:
     if (!isInstantAnnotating.current && ev.pointerType === 'pen' && penDragAnchorRef.current) {
       const anchor = penDragAnchorRef.current;
-      const range = rangeFromAnchorToPoint(
-        doc,
-        anchor.node,
-        anchor.offset,
-        ev.clientX,
-        ev.clientY,
-      );
+      const range = rangeFromAnchorToPoint(doc, anchor.node, anchor.offset, ev.clientX, ev.clientY);
       const sel = doc.getSelection();
       if (range && !range.collapsed && sel) {
         guardProgrammaticSelection();
@@ -1226,7 +1220,8 @@ export const useTextSelector = (
     // Desktop mouse selections and pen drag selections defer to pointerup, but a keyboard selection
     // adjustment (#4728) has no pointerup — process it as long as a pointer drag
     // isn't in progress (mid-drag still defers to pointerup).
-    if (!isAndroid && (!isTouchInput || lastPointerType.current === 'pen') && isPointerDown.current) return;
+    if (!isAndroid && (!isTouchInput || lastPointerType.current === 'pen') && isPointerDown.current)
+      return;
     // Touch drags in paginated mode (iOS/web): the system handle drag streams
     // selectionchange while the Annotator's touchmove handler hides the popup;
     // processing each change re-showed it and made the toolbar flash. Defer to

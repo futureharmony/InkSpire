@@ -50,7 +50,12 @@ interface HandwritingState {
   clearPage: (bookHash: string, pageIndex: number) => void;
 
   addStickyNote: (bookHash: string, pageIndex: number, note: HandwritingStickyNote) => void;
-  updateStickyNote: (bookHash: string, pageIndex: number, noteId: string, partial: Partial<HandwritingStickyNote>) => void;
+  updateStickyNote: (
+    bookHash: string,
+    pageIndex: number,
+    noteId: string,
+    partial: Partial<HandwritingStickyNote>,
+  ) => void;
   removeStickyNote: (bookHash: string, pageIndex: number, noteId: string) => void;
   getStickyNotes: (bookHash: string, pageIndex: number) => HandwritingStickyNote[];
   setActiveStickyNoteId: (id: string | null) => void;
@@ -376,8 +381,7 @@ export const useHandwritingStore = create<HandwritingState>((set, get) => ({
             [pageIndex]: pageNotes.filter((n) => n.id !== noteId),
           },
         },
-        activeStickyNoteId:
-          state.activeStickyNoteId === noteId ? null : state.activeStickyNoteId,
+        activeStickyNoteId: state.activeStickyNoteId === noteId ? null : state.activeStickyNoteId,
       };
     });
   },
@@ -391,10 +395,7 @@ export const useHandwritingStore = create<HandwritingState>((set, get) => ({
     set({ activeStickyNoteId: id });
   },
 
-  loadBookStickyNotes: (
-    bookHash: string,
-    notes: Record<number, HandwritingStickyNote[]>,
-  ) => {
+  loadBookStickyNotes: (bookHash: string, notes: Record<number, HandwritingStickyNote[]>) => {
     set((state) => ({
       stickyNotes: {
         ...state.stickyNotes,

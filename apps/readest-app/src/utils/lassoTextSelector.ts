@@ -54,7 +54,12 @@ export function extractTextFromStroke(
       if (!doc) continue;
 
       const iframe = doc.defaultView?.frameElement as HTMLIFrameElement | null;
-      const iframeRect = iframe?.getBoundingClientRect?.() ?? { left: 0, top: 0, width: containerWidth, height: containerHeight };
+      const iframeRect = iframe?.getBoundingClientRect?.() ?? {
+        left: 0,
+        top: 0,
+        width: containerWidth,
+        height: containerHeight,
+      };
 
       // Sample a grid of points within the box to find intersecting text
       const samplePoints: { x: number; y: number }[] = [];

@@ -385,7 +385,8 @@ export const useCapturedTurn = (bookKey: string, viewRef: React.RefObject<Foliat
         document.getElementById(`reader-content-${bookKey}`) ??
         document
           .getElementById(`gridcell-${bookKey}`)
-          ?.querySelector<HTMLElement>('foliate-view') ?? null,
+          ?.querySelector<HTMLElement>('foliate-view') ??
+        null,
       onBeforeCapture: () => {
         restoreToolbarOnCancelRef.current = useReaderStore.getState().hoveredBookKey === bookKey;
       },
