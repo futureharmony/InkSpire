@@ -198,9 +198,9 @@ describe('gestureRecognizer', () => {
       ];
 
       // Spy on caret/word resolution by injecting doc methods or using view fallback
-      (mockDoc as any).caretPositionFromPoint = () => null;
-      (mockDoc as any).createRange = () => mockRange;
-      (mockDoc as any).caretRangeFromPoint = () => mockRange;
+      (mockDoc as unknown as Record<string, unknown>)['caretPositionFromPoint'] = () => null;
+      (mockDoc as unknown as Record<string, unknown>)['createRange'] = () => mockRange;
+      (mockDoc as unknown as Record<string, unknown>)['caretRangeFromPoint'] = () => mockRange;
 
       const result = snapUnderlineToText(points, mockView, width, height, {
         left: 0,
@@ -254,7 +254,7 @@ describe('gestureRecognizer', () => {
         getCFI: vi.fn(() => 'epubcfi(/6/2!/4/2:5)'),
       };
 
-      (mockDoc as any).caretRangeFromPoint = () => mockRange;
+      (mockDoc as unknown as Record<string, unknown>)['caretRangeFromPoint'] = () => mockRange;
 
       const points: HandwritingPoint[] = [
         { x: 0.11, y: 0.145 },

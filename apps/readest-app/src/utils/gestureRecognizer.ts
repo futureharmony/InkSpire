@@ -346,7 +346,7 @@ export function snapUnderlineToText(
 
   if (!bestRange) return null;
 
-  let rangeRect = getRangeRectInWebview(bestRange);
+  const rangeRect = getRangeRectInWebview(bestRange);
   if (!rangeRect) return null;
 
   // Normalized bounds of the text line

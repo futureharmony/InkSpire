@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { extractTextFromStroke } from '@/utils/lassoTextSelector';
 import { HandwritingPoint } from '@/types/handwriting';
+import { FoliateView } from '@/types/view';
 
 describe('lassoTextSelector', () => {
   test('returns null when points are fewer than 2 or view is null', () => {
@@ -35,7 +36,7 @@ describe('lassoTextSelector', () => {
       },
       querySelectorAll: (sel: string) => mockContainer.querySelectorAll(sel),
       querySelector: (sel: string) => mockContainer.querySelector(sel),
-    } as any;
+    } as unknown as FoliateView;
 
     // Stroke circling around (100, 100) -> (500, 150) normalized to 1000x1000
     const points: HandwritingPoint[] = [
