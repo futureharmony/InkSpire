@@ -43,10 +43,10 @@ export function detectScratchOutGesture(
     return { isScratch: false };
   }
 
-  // Check duration: scratch-outs are fast, typically under 1200ms
+  // Check duration: scratch-outs are typically quick, under 2500ms
   const firstTime = points[0]?.time;
   const lastTime = points[points.length - 1]?.time;
-  if (firstTime && lastTime && lastTime - firstTime > 1300) {
+  if (firstTime && lastTime && lastTime - firstTime > 2500) {
     return { isScratch: false };
   }
 
@@ -67,47 +67,65 @@ export function detectScratchOutGesture(
   const boxW = maxX - minX;
   const boxH = maxY - minY;
 
-  // Must span a reasonable horizontal width, and not be overwhelmingly tall
-  if (boxW < 18 || boxH > 160) {
+  // Must span a reasonable distance (at least 15px in one dimension, or hypot >= 20px)
+  if (Math.hypot(boxW, boxH) < 20 || (boxW < 15 && boxH < 15)) {
     return { isScratch: false };
   }
 
-  // Track horizontal reversals (alternating left-right-left-right strokes)
-  let reversals = 0;
-  let prevDir = 0; // -1: left, 1: right
+  // Track reversals across both X and Y axes (alternating back-and-forth scribbles)
+  let reversalsX = 0;
+  let prevDirX = 0;
   let lastAnchorX = points[0]!.x * width;
   let totalHorizontalTravel = 0;
+
+  let reversalsY = 0;
+  let prevDirY = 0;
+  let lastAnchorY = points[0]!.y * height;
+  let totalVerticalTravel = 0;
 
   for (let i = 1; i < points.length; i++) {
     const currentX = points[i]!.x * width;
     const dx = currentX - lastAnchorX;
-
-    // Filter tiny jitters
-    if (Math.abs(dx) >= 6) {
-      const currentDir = dx > 0 ? 1 : -1;
+    if (Math.abs(dx) >= 5) {
+      const currentDirX = dx > 0 ? 1 : -1;
       totalHorizontalTravel += Math.abs(dx);
-
-      if (prevDir !== 0 && currentDir !== prevDir) {
-        reversals++;
+      if (prevDirX !== 0 && currentDirX !== prevDirX) {
+        reversalsX++;
       }
-      prevDir = currentDir;
+      prevDirX = currentDirX;
       lastAnchorX = currentX;
+    }
+
+    const currentY = points[i]!.y * height;
+    const dy = currentY - lastAnchorY;
+    if (Math.abs(dy) >= 5) {
+      const currentDirY = dy > 0 ? 1 : -1;
+      totalVerticalTravel += Math.abs(dy);
+      if (prevDirY !== 0 && currentDirY !== prevDirY) {
+        reversalsY++;
+      }
+      prevDirY = currentDirY;
+      lastAnchorY = currentY;
     }
   }
 
-  // A valid scratch-out must have at least 3 direction reversals
-  // and horizontal distance traveled should significantly exceed box width
-  if (reversals >= 3 && totalHorizontalTravel >= boxW * 1.8) {
-    // Add comfortable padding to bounding box
-    const padX = 10 / width;
-    const padY = 8 / height;
+  const isHorizontalScratch = reversalsX >= 3 && totalHorizontalTravel >= boxW * 1.3;
+  const isVerticalScratch = reversalsY >= 3 && totalVerticalTravel >= boxH * 1.3;
+  const isDiagonalScratch =
+    reversalsX + reversalsY >= 4 &&
+    totalHorizontalTravel + totalVerticalTravel >= Math.hypot(boxW, boxH) * 1.3;
+
+  if (isHorizontalScratch || isVerticalScratch || isDiagonalScratch) {
+    // Proportional comfortable padding to cover erased strokes cleanly
+    const padPxX = Math.max(12, boxW * 0.15);
+    const padPxY = Math.max(12, boxH * 0.15);
     return {
       isScratch: true,
       bbox: {
-        minX: Math.max(0, minX / width - padX),
-        minY: Math.max(0, minY / height - padY),
-        maxX: Math.min(1, maxX / width + padX),
-        maxY: Math.min(1, maxY / height + padY),
+        minX: Math.max(0, (minX - padPxX) / width),
+        minY: Math.max(0, (minY - padPxY) / height),
+        maxX: Math.min(1, (maxX + padPxX) / width),
+        maxY: Math.min(1, (maxY + padPxY) / height),
       },
     };
   }
@@ -387,15 +405,9 @@ export function snapUnderlineToText(
     snappedY = Math.min(0.99, textBottom + 0.003);
   }
 
-  const minStrokeX = Math.min(pFirst.x, pLast.x);
-  const maxStrokeX = Math.max(pFirst.x, pLast.x);
-
-  const snappedStartX = Math.max(textLeft, minStrokeX);
-  const snappedEndX = Math.min(textRight, maxStrokeX);
-
-  const isLeftToRight = pFirst.x <= pLast.x;
-  const startX = isLeftToRight ? snappedStartX : snappedEndX;
-  const endX = isLeftToRight ? snappedEndX : snappedStartX;
+  // Keep the user's drawn horizontal span (do not clamp to a single word's bounds)
+  const startX = pFirst.x;
+  const endX = pLast.x;
 
   // Generate 7 cleanly interpolated points along the snapped line
   const count = 7;

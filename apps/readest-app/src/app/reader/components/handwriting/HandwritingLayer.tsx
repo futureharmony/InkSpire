@@ -41,6 +41,42 @@ import { StickyNoteCard } from './StickyNoteCard';
 import { LassoActionMenu } from './LassoActionMenu';
 import { uniqueId } from '@/utils/misc';
 
+function segmentIntersectsBox(
+  p1: HandwritingPoint,
+  p2: HandwritingPoint,
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+): boolean {
+  if (p1.x >= minX && p1.x <= maxX && p1.y >= minY && p1.y <= maxY) return true;
+  if (p2.x >= minX && p2.x <= maxX && p2.y >= minY && p2.y <= maxY) return true;
+
+  const intersect = (
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    x3: number,
+    y3: number,
+    x4: number,
+    y4: number,
+  ) => {
+    const denom = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+    if (denom === 0) return false;
+    const ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denom;
+    const ub = ((x2 - x1) * (y1 - y3) - (y2 - y1) * (x1 - x3)) / denom;
+    return ua >= 0 && ua <= 1 && ub >= 0 && ub <= 1;
+  };
+
+  return (
+    intersect(p1.x, p1.y, p2.x, p2.y, minX, minY, maxX, minY) ||
+    intersect(p1.x, p1.y, p2.x, p2.y, minX, maxY, maxX, maxY) ||
+    intersect(p1.x, p1.y, p2.x, p2.y, minX, minY, minX, maxY) ||
+    intersect(p1.x, p1.y, p2.x, p2.y, maxX, minY, maxX, maxY)
+  );
+}
+
 interface HandwritingLayerProps {
   bookKey: string;
   contentInsets: Insets;
@@ -508,7 +544,19 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
       const { minX, minY, maxX, maxY } = scratch.bbox;
       const strokes = getPageStrokes(bookHash, currentPageIndex);
       const remainingStrokes = strokes.filter((s) => {
-        return !s.points.some((pt) => pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY);
+        for (let i = 0; i < s.points.length; i++) {
+          const pt = s.points[i]!;
+          if (pt.x >= minX && pt.x <= maxX && pt.y >= minY && pt.y <= maxY) {
+            return false;
+          }
+          if (i > 0) {
+            const prev = s.points[i - 1]!;
+            if (segmentIntersectsBox(prev, pt, minX, minY, maxX, maxY)) {
+              return false;
+            }
+          }
+        }
+        return true;
       });
 
       if (remainingStrokes.length !== strokes.length) {
@@ -544,7 +592,23 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
     if (loop.isClosedLoop) {
       const extracted = extractTextFromStroke(points, dimensions.width, dimensions.height, view);
       if (extracted && extracted.text.trim().length > 0) {
-        const noteX = loop.bbox.maxX > 0.65 ? 0.04 : 0.74;
+        // Keep note in the margin of the same page/column as the circle
+        let noteX: number;
+        if (loop.center.x > 0.5) {
+          // Right page/column: keep on the right half
+          if (loop.bbox.maxX < 0.76) {
+            noteX = Math.min(0.76, loop.bbox.maxX + 0.02);
+          } else {
+            noteX = Math.max(0.52, loop.bbox.minX - 0.22);
+          }
+        } else {
+          // Left page/column: keep on the left half
+          if (loop.bbox.minX > 0.24) {
+            noteX = Math.max(0.04, loop.bbox.minX - 0.22);
+          } else {
+            noteX = Math.min(0.26, loop.bbox.maxX + 0.02);
+          }
+        }
         const noteY = Math.max(0.04, Math.min(0.78, loop.center.y - 0.06));
         const newNote: HandwritingStickyNote = {
           id: uniqueId(),
@@ -563,9 +627,14 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
         persistPageStickyNotes(
           bookHash,
           currentPageIndex,
-          getStickyNotes(bookHash, currentPageIndex),
+          [...getStickyNotes(bookHash, currentPageIndex), newNote],
         );
         schedulePageSnapshot(currentPageIndex);
+
+        currentStrokePoints.current = [];
+        const ctx = canvas?.getContext('2d');
+        ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
+        return;
       }
     }
 

@@ -13,39 +13,44 @@ interface StickyNoteCardProps {
   pageIndex: number;
 }
 
-const COLOR_CLASSES: Record<
+const COLOR_CONFIGS: Record<
   StickyNoteColor,
-  { bg: string; border: string; badge: string; accent: string }
+  {
+    stripe: string;
+    badge: string;
+    quoteBg: string;
+    quoteBorder: string;
+  }
 > = {
   yellow: {
-    bg: 'bg-amber-50 dark:bg-amber-950/80 text-amber-950 dark:text-amber-100',
-    border: 'border-amber-300 dark:border-amber-700/60 shadow-amber-500/10',
-    badge: 'bg-amber-400',
-    accent: 'bg-amber-100 dark:bg-amber-900/50',
+    stripe: 'border-l-amber-500 dark:border-l-amber-400',
+    badge: 'bg-amber-500',
+    quoteBg: 'bg-amber-500/10 dark:bg-amber-400/10',
+    quoteBorder: 'border-l-amber-500 dark:border-l-amber-400',
   },
   green: {
-    bg: 'bg-emerald-50 dark:bg-emerald-950/80 text-emerald-950 dark:text-emerald-100',
-    border: 'border-emerald-300 dark:border-emerald-700/60 shadow-emerald-500/10',
-    badge: 'bg-emerald-400',
-    accent: 'bg-emerald-100 dark:bg-emerald-900/50',
+    stripe: 'border-l-emerald-500 dark:border-l-emerald-400',
+    badge: 'bg-emerald-500',
+    quoteBg: 'bg-emerald-500/10 dark:bg-emerald-400/10',
+    quoteBorder: 'border-l-emerald-500 dark:border-l-emerald-400',
   },
   blue: {
-    bg: 'bg-sky-50 dark:bg-sky-950/80 text-sky-950 dark:text-sky-100',
-    border: 'border-sky-300 dark:border-sky-700/60 shadow-sky-500/10',
-    badge: 'bg-sky-400',
-    accent: 'bg-sky-100 dark:bg-sky-900/50',
+    stripe: 'border-l-sky-500 dark:border-l-sky-400',
+    badge: 'bg-sky-500',
+    quoteBg: 'bg-sky-500/10 dark:bg-sky-400/10',
+    quoteBorder: 'border-l-sky-500 dark:border-l-sky-400',
   },
   pink: {
-    bg: 'bg-rose-50 dark:bg-rose-950/80 text-rose-950 dark:text-rose-100',
-    border: 'border-rose-300 dark:border-rose-700/60 shadow-rose-500/10',
-    badge: 'bg-rose-400',
-    accent: 'bg-rose-100 dark:bg-rose-900/50',
+    stripe: 'border-l-rose-500 dark:border-l-rose-400',
+    badge: 'bg-rose-500',
+    quoteBg: 'bg-rose-500/10 dark:bg-rose-400/10',
+    quoteBorder: 'border-l-rose-500 dark:border-l-rose-400',
   },
   slate: {
-    bg: 'bg-slate-50 dark:bg-slate-900/90 text-slate-900 dark:text-slate-100',
-    border: 'border-slate-300 dark:border-slate-700/60 shadow-slate-500/10',
+    stripe: 'border-l-slate-400 dark:border-l-slate-400',
     badge: 'bg-slate-400',
-    accent: 'bg-slate-200/60 dark:bg-slate-800/60',
+    quoteBg: 'bg-slate-500/10 dark:bg-slate-400/10',
+    quoteBorder: 'border-l-slate-400 dark:border-l-slate-400',
   },
 };
 
@@ -134,7 +139,7 @@ export const StickyNoteCard: React.FC<StickyNoteCardProps> = ({
     persistPageStickyNotes(bookHash, pageIndex, currentNotes);
   };
 
-  const colors = COLOR_CLASSES[note.color || 'yellow'];
+  const colorConfig = COLOR_CONFIGS[note.color || 'yellow'];
 
   const pixelLeft = position.x * containerWidth;
   const pixelTop = position.y * containerHeight;
@@ -143,12 +148,7 @@ export const StickyNoteCard: React.FC<StickyNoteCardProps> = ({
   if (note.isPinned) {
     return (
       <div
-        className={clsx(
-          'absolute z-30 cursor-pointer pointer-events-auto transition-transform hover:scale-110 active:scale-95',
-          'flex items-center gap-1.5 px-2.5 py-1 rounded-full shadow-md border backdrop-blur-sm',
-          colors.bg,
-          colors.border,
-        )}
+        className='absolute z-30 cursor-pointer pointer-events-auto transition-transform hover:scale-105 active:scale-95 flex items-center gap-1.5 px-2.5 py-1 rounded-full shadow-lg border border-base-content/15 bg-base-100/90 dark:bg-base-200/90 text-base-content backdrop-blur-md'
         style={{
           left: `${pixelLeft}px`,
           top: `${pixelTop}px`,
@@ -156,9 +156,9 @@ export const StickyNoteCard: React.FC<StickyNoteCardProps> = ({
         onClick={handleTogglePin}
         title={note.selectedText || note.content || '便签'}
       >
-        <span className={clsx('w-2 h-2 rounded-full', colors.badge)} />
-        <LuPin className='w-3 h-3 rotate-45 opacity-80' />
-        <span className='text-xs font-medium max-w-[100px] truncate'>
+        <span className={clsx('w-2 h-2 rounded-full flex-shrink-0', colorConfig.badge)} />
+        <LuPin className='w-3 h-3 rotate-45 opacity-70' />
+        <span className='text-xs font-medium max-w-[120px] truncate opacity-90'>
           {note.content || note.selectedText || '便签'}
         </span>
       </div>
@@ -169,10 +169,11 @@ export const StickyNoteCard: React.FC<StickyNoteCardProps> = ({
   return (
     <div
       className={clsx(
-        'absolute z-30 pointer-events-auto flex flex-col rounded-xl shadow-xl border backdrop-blur-md',
-        'w-64 max-w-[90vw] transition-shadow duration-150',
-        colors.bg,
-        colors.border,
+        'absolute z-30 pointer-events-auto flex flex-col rounded-2xl shadow-2xl backdrop-blur-xl transition-shadow duration-150',
+        'w-64 max-w-[90vw] overflow-hidden',
+        'bg-base-100/95 dark:bg-base-200/95 text-base-content',
+        'border border-base-content/15 border-l-4',
+        colorConfig.stripe,
       )}
       style={{
         left: `${pixelLeft}px`,
@@ -181,14 +182,14 @@ export const StickyNoteCard: React.FC<StickyNoteCardProps> = ({
     >
       {/* Card Header with drag handle, colors, pin, delete */}
       <div
-        className='flex items-center justify-between px-2.5 py-1.5 border-b border-black/10 dark:border-white/10 cursor-move select-none'
+        className='flex items-center justify-between px-3 py-2 border-b border-base-content/10 cursor-move select-none bg-base-200/40 dark:bg-base-300/30'
         onPointerDown={handleDragStart}
         onPointerMove={handleDragMove}
         onPointerUp={handleDragEnd}
         onPointerCancel={handleDragEnd}
       >
-        <div className='flex items-center gap-1'>
-          <LuMove className='w-3.5 h-3.5 opacity-50 mr-0.5' />
+        <div className='flex items-center gap-1.5'>
+          <LuMove className='w-3.5 h-3.5 opacity-40 mr-0.5' />
           {COLOR_OPTIONS.map((c) => (
             <button
               key={c}
@@ -196,28 +197,28 @@ export const StickyNoteCard: React.FC<StickyNoteCardProps> = ({
               onClick={() => handleColorChange(c)}
               className={clsx(
                 'w-3.5 h-3.5 rounded-full transition-transform',
-                COLOR_CLASSES[c].badge,
+                COLOR_CONFIGS[c].badge,
                 note.color === c
-                  ? 'ring-2 ring-offset-1 ring-black/40 dark:ring-white/60 scale-110'
-                  : 'opacity-70 hover:opacity-100',
+                  ? 'ring-2 ring-offset-1 ring-base-content/40 scale-110'
+                  : 'opacity-60 hover:opacity-100',
               )}
             />
           ))}
         </div>
 
-        <div className='flex items-center gap-1'>
+        <div className='flex items-center gap-1 text-base-content/70'>
           <button
             type='button'
             onClick={handleTogglePin}
-            className='p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-colors'
+            className='p-1 rounded-lg hover:bg-base-content/10 transition-colors'
             title='收起到边栏'
           >
-            <LuPin className='w-3.5 h-3.5 opacity-70' />
+            <LuPin className='w-3.5 h-3.5 opacity-80' />
           </button>
           <button
             type='button'
             onClick={handleDelete}
-            className='p-1 rounded hover:bg-red-500/20 text-red-600 dark:text-red-400 transition-colors'
+            className='p-1 rounded-lg hover:bg-error/20 text-error transition-colors'
             title='删除便签'
           >
             <LuTrash2 className='w-3.5 h-3.5' />
@@ -229,8 +230,9 @@ export const StickyNoteCard: React.FC<StickyNoteCardProps> = ({
       {note.selectedText && (
         <div
           className={clsx(
-            'px-3 py-1.5 text-xs font-serif italic border-b border-black/5 dark:border-white/5 opacity-85 line-clamp-3',
-            colors.accent,
+            'px-3 py-2 text-xs font-serif italic border-l-2 opacity-90 line-clamp-3 mx-2.5 mt-2 rounded',
+            colorConfig.quoteBg,
+            colorConfig.quoteBorder,
           )}
         >
           “{note.selectedText}”
@@ -238,19 +240,19 @@ export const StickyNoteCard: React.FC<StickyNoteCardProps> = ({
       )}
 
       {/* Note Body Textarea */}
-      <div className='p-2.5 flex-1 flex flex-col'>
+      <div className='p-3 flex-1 flex flex-col'>
         <textarea
           value={content}
           onChange={handleContentChange}
           placeholder='在此记录灵感、批注或书摘...'
           rows={3}
-          className='w-full bg-transparent resize-none text-xs sm:text-sm font-sans focus:outline-none placeholder:text-black/35 dark:placeholder:text-white/35 leading-relaxed'
+          className='w-full bg-transparent resize-none text-xs sm:text-sm font-sans focus:outline-none placeholder:text-base-content/35 text-base-content leading-relaxed'
           autoFocus={!content}
         />
       </div>
 
       {/* Footer info timestamp */}
-      <div className='px-2.5 pb-1.5 flex justify-between items-center text-[10px] opacity-45 select-none'>
+      <div className='px-3 pb-2 flex justify-between items-center text-[10px] text-base-content/40 select-none'>
         <span>第 {pageIndex + 1} 页</span>
         <span>
           {new Date(note.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
