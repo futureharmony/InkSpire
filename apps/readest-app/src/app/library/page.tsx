@@ -103,6 +103,7 @@ import { createFeedBook, ensureFeedBookCover } from '@/services/rss/feedBook';
 import { MigrateDataWindow } from './components/MigrateDataWindow';
 import { BackupWindow } from './components/BackupWindow';
 import { CacheManagerWindow } from './components/CacheManagerWindow';
+import HandwritingOverviewDialog from '@/app/reader/components/handwriting/HandwritingOverviewDialog';
 import { useDragDropImport } from './hooks/useDragDropImport';
 import { useTransferQueue } from '@/hooks/useTransferQueue';
 import { useAppRouter } from '@/hooks/useAppRouter';
@@ -256,6 +257,13 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   const [showAddFeed, setShowAddFeed] = useState(false);
   const [showWebSources, setShowWebSources] = useState(false);
   const [showImportNovel, setShowImportNovel] = useState(false);
+  const [showHandwritingOverview, setShowHandwritingOverview] = useState(false);
+
+  useEffect(() => {
+    const show = () => setShowHandwritingOverview(true);
+    eventDispatcher.on('show-handwriting-overview', show);
+    return () => eventDispatcher.off('show-handwriting-overview', show);
+  }, []);
   const [importMenuAnchor, setImportMenuAnchor] = useState<HTMLElement | null>(null);
   const [loading, setLoading] = useState(false);
   // Seed from the library store: if we already have books in memory (the
@@ -2223,6 +2231,10 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
         isOpen={showImportNovel}
         onClose={() => setShowImportNovel(false)}
         onImport={handleImportNovelFile}
+      />
+      <HandwritingOverviewDialog
+        isOpen={showHandwritingOverview}
+        onClose={() => setShowHandwritingOverview(false)}
       />
       <ClipSignInAlert />
       <Toast />

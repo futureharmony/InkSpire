@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import clsx from 'clsx';
 import {
   LuPenTool,
@@ -18,45 +18,63 @@ import {
   LuHand,
   LuScissors,
   LuLassoSelect,
+  LuPalette,
+  LuEllipsis,
+  LuNotebookTabs,
 } from 'react-icons/lu';
+import { PiCaretLeft, PiCaretRight } from 'react-icons/pi';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useHandwritingStore } from '@/store/handwritingStore';
+import { useReaderStore } from '@/store/readerStore';
 import { useThemeStore } from '@/store/themeStore';
 import { HandwritingShapeType, HandwritingTool } from '@/types/handwriting';
 import { persistPageHandwriting } from '@/services/handwritingService';
 import { Insets } from '@/types/misc';
 import HandwritingExportDialog from './HandwritingExportDialog';
+import HandwritingOverviewDialog from './HandwritingOverviewDialog';
 
-interface HandwritingToolbarProps {
+export interface HandwritingToolbarProps {
   bookKey: string;
-  containerWidth: number;
-  containerHeight: number;
+  headerWidth?: number;
+  containerWidth?: number;
+  containerHeight?: number;
   contentInsets?: Insets;
+  onSubMenuOpenChange?: (isOpen: boolean) => void;
 }
 
 const COLOR_PRESETS = [
   '#000000',
+  '#64748b', // Slate Gray
   '#ef4444', // Red
-  '#3b82f6', // Blue
-  '#22c55e', // Green
-  '#eab308', // Yellow
-  '#a855f7', // Purple
   '#f97316', // Orange
+  '#eab308', // Yellow
+  '#22c55e', // Green
+  '#3b82f6', // Blue
+  '#a855f7', // Purple
 ];
 
 export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
   bookKey,
+  headerWidth,
   containerWidth,
   containerHeight,
-  contentInsets,
+  onSubMenuOpenChange,
 }) => {
   const _ = useTranslation();
   const { isDarkMode } = useThemeStore();
   const [showShapeMenu, setShowShapeMenu] = useState(false);
+  const [showCompactMoreMenu, setShowCompactMoreMenu] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
-  const [activeSubMenu, setActiveSubMenu] = useState<'pen' | 'pencil' | 'highlighter' | 'eraser' | null>(null);
+  const [showOverviewDialog, setShowOverviewDialog] = useState(false);
+  const [showNoteNavDropdown, setShowNoteNavDropdown] = useState(false);
+  const [activeSubMenu, setActiveSubMenu] = useState<
+    'pen' | 'pencil' | 'highlighter' | 'eraser' | 'color' | null
+  >(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const subMenuRef = useRef<HTMLDivElement>(null);
+  const shapeMenuRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const noteNavDropdownRef = useRef<HTMLDivElement>(null);
 
   const bookHash = bookKey.split('-')[0]!;
 
@@ -86,22 +104,158 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
     getPageStrokes,
   } = useHandwritingStore();
 
+  const allBookStrokes = useHandwritingStore((s) => s.bookStrokes[bookHash]);
+  const allBookSticky = useHandwritingStore((s) => s.stickyNotes[bookHash]);
+
+  // Discover all pages with notes in current book in ascending order
+  const notePages = useMemo(() => {
+    const pagesSet = new Set<number>();
+    if (allBookStrokes) {
+      for (const [p, s] of Object.entries(allBookStrokes)) {
+        if (s && s.length > 0) pagesSet.add(Number(p));
+      }
+    }
+    if (allBookSticky) {
+      for (const [p, n] of Object.entries(allBookSticky)) {
+        if (n && n.length > 0) pagesSet.add(Number(p));
+      }
+    }
+    return Array.from(pagesSet).sort((a, b) => a - b);
+  }, [allBookStrokes, allBookSticky]);
+
+  // Measure container width via ResizeObserver
+  const [actualContainerWidth, setActualContainerWidth] = useState<number>(0);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const el = toolbarRef.current?.parentElement || toolbarRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry && entry.contentRect.width > 0) {
+        setActualContainerWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Responsive tiers:
+  // When actualContainerWidth is measured, we know the exact width available for this toolbar.
+  // Full wide needs >= 640px. Compact needs < 460px.
+  // In synthetic tests where headerWidth is passed (e.g. 900 vs 400), we fallback to 720/520 thresholds.
+  const effectiveWidth =
+    actualContainerWidth > 0
+      ? actualContainerWidth
+      : headerWidth && headerWidth > 0
+        ? headerWidth
+        : containerWidth && containerWidth > 0
+          ? containerWidth
+          : typeof window !== 'undefined'
+            ? window.innerWidth
+            : 800;
+
+  const isWide = actualContainerWidth > 0 ? actualContainerWidth >= 640 : effectiveWidth >= 720;
+  const isCompact = actualContainerWidth > 0 ? actualContainerWidth < 460 : effectiveWidth < 520;
+
+  const currentNoteIndex = notePages.indexOf(currentPageIndex);
+
+  let hasPrevNote = false;
+  let hasNextNote = false;
+  let prevPageIndex: number | null = null;
+  let nextPageIndex: number | null = null;
+  let currentNoteBadge = '';
+
+  if (notePages.length > 0) {
+    if (currentNoteIndex >= 0) {
+      hasPrevNote = currentNoteIndex > 0;
+      hasNextNote = currentNoteIndex < notePages.length - 1;
+      prevPageIndex = hasPrevNote ? notePages[currentNoteIndex - 1]! : null;
+      nextPageIndex = hasNextNote ? notePages[currentNoteIndex + 1]! : null;
+      currentNoteBadge = isCompact
+        ? `${currentNoteIndex + 1}/${notePages.length}`
+        : isWide
+          ? `${_('Note')} ${currentNoteIndex + 1}/${notePages.length} · P.${currentPageIndex + 1}`
+          : `${currentNoteIndex + 1}/${notePages.length} · P.${currentPageIndex + 1}`;
+    } else {
+      const prev = [...notePages].reverse().find((p: number) => p < currentPageIndex);
+      const next = notePages.find((p: number) => p > currentPageIndex);
+      hasPrevNote = prev !== undefined;
+      hasNextNote = next !== undefined;
+      prevPageIndex = prev ?? null;
+      nextPageIndex = next ?? null;
+      currentNoteBadge = isCompact
+        ? `${notePages.length}P`
+        : isWide
+          ? `${notePages.length} ${_('notes')}`
+          : `${notePages.length}P`;
+    }
+  }
+
+  const handleGoToPrevNote = () => {
+    if (prevPageIndex === null) return;
+    const view = useReaderStore.getState().getView(bookKey);
+    view?.goTo(prevPageIndex);
+    useHandwritingStore.getState().setCurrentPageIndex(prevPageIndex);
+  };
+
+  const handleGoToNextNote = () => {
+    if (nextPageIndex === null) return;
+    const view = useReaderStore.getState().getView(bookKey);
+    view?.goTo(nextPageIndex);
+    useHandwritingStore.getState().setCurrentPageIndex(nextPageIndex);
+  };
+
+  const handleJumpToNotePage = (targetPageIndex: number) => {
+    const view = useReaderStore.getState().getView(bookKey);
+    view?.goTo(targetPageIndex);
+    useHandwritingStore.getState().setCurrentPageIndex(targetPageIndex);
+  };
+
   // Close menus on outside click
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
+      const target = e.target as Node;
       if (
         toolbarRef.current &&
-        !toolbarRef.current.contains(e.target as Node) &&
+        !toolbarRef.current.contains(target) &&
         subMenuRef.current &&
-        !subMenuRef.current.contains(e.target as Node)
+        !subMenuRef.current.contains(target) &&
+        shapeMenuRef.current &&
+        !shapeMenuRef.current.contains(target) &&
+        moreMenuRef.current &&
+        !moreMenuRef.current.contains(target) &&
+        noteNavDropdownRef.current &&
+        !noteNavDropdownRef.current.contains(target)
       ) {
         setActiveSubMenu(null);
         setShowShapeMenu(false);
+        setShowCompactMoreMenu(false);
+        setShowNoteNavDropdown(false);
       }
     };
     window.addEventListener('pointerdown', handleOutsideClick);
     return () => window.removeEventListener('pointerdown', handleOutsideClick);
   }, []);
+
+  // Notify parent HeaderBar if any sub-menu or modal is open so the header stays pinned
+  useEffect(() => {
+    const isAnyOpen =
+      activeSubMenu !== null ||
+      showShapeMenu ||
+      showCompactMoreMenu ||
+      showExportDialog ||
+      showOverviewDialog ||
+      showNoteNavDropdown;
+    onSubMenuOpenChange?.(isAnyOpen);
+  }, [
+    activeSubMenu,
+    showShapeMenu,
+    showCompactMoreMenu,
+    showExportDialog,
+    showOverviewDialog,
+    showNoteNavDropdown,
+    onSubMenuOpenChange,
+  ]);
 
   const isVisible = activeBookKey === bookKey;
   if (!isVisible) return null;
@@ -129,11 +283,13 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
   const handleSelectShape = (shape: HandwritingShapeType) => {
     setShape(shape);
     setShowShapeMenu(false);
+    setShowCompactMoreMenu(false);
     setActiveSubMenu(null);
   };
 
   const handleToolClick = (tool: HandwritingTool) => {
     setShowShapeMenu(false);
+    setShowCompactMoreMenu(false);
     if (tool === 'shape') {
       setActiveSubMenu(null);
       setShowShapeMenu((v) => !v);
@@ -142,7 +298,9 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
 
     if (currentTool === tool) {
       // Second click on active tool -> toggle floating sub-toolbar
-      setActiveSubMenu((prev) => (prev === tool ? null : (tool as 'pen' | 'pencil' | 'highlighter' | 'eraser')));
+      setActiveSubMenu((prev) =>
+        prev === tool ? null : (tool as 'pen' | 'pencil' | 'highlighter' | 'eraser'),
+      );
     } else {
       // First click on inactive tool -> activate tool
       setTool(tool);
@@ -150,10 +308,7 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
     }
   };
 
-  const activeColor =
-    currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
-
-  const topOffset = Math.max(12, (contentInsets?.top || 0) + 8);
+  const activeColor = currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
 
   const getToolDisplayName = (tool: string) => {
     switch (tool) {
@@ -170,11 +325,10 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
 
   return (
     <>
-      {/* Primary Handwriting Toolbar */}
+      {/* Primary Handwriting Toolbar - Integrated in HeaderBar */}
       <div
         ref={toolbarRef}
-        className='pointer-events-auto absolute left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-base-100/95 backdrop-blur-md shadow-2xl border border-base-300/80 animate-in fade-in slide-in-from-top-4 duration-200 select-none'
-        style={{ top: `${topOffset}px` }}
+        className='header-handwriting-toolbar pointer-events-auto relative flex items-center gap-0.5 sm:gap-1 h-8 px-1.5 py-0.5 rounded-xl bg-base-200/60 border border-base-300/60 shadow-xs select-none shrink-0'
         onPointerDown={(e) => e.stopPropagation()}
         onPointerMove={(e) => e.stopPropagation()}
         onPointerUp={(e) => e.stopPropagation()}
@@ -182,19 +336,20 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Tool Selector Group */}
-        <div className='flex items-center gap-1 bg-base-200/60 p-1 rounded-xl'>
+        <div className='flex items-center gap-0.5 shrink-0'>
           {/* 钢笔 Fountain Pen */}
           <button
             title={_('Fountain Pen (Smooth & Pressure)')}
+            aria-label={_('Fountain Pen (Smooth & Pressure)')}
             className={clsx(
-              'btn btn-ghost btn-xs h-8 w-8 p-0 rounded-lg transition-all relative',
+              'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg transition-all relative shrink-0',
               currentTool === 'pen'
                 ? 'bg-primary text-primary-content shadow-xs scale-105'
-                : 'text-base-content/80 hover:bg-base-300',
+                : 'text-base-content/80 hover:bg-base-300/70',
             )}
             onClick={() => handleToolClick('pen')}
           >
-            <LuPenTool size={16} />
+            <LuPenTool size={15} />
             {currentTool === 'pen' && (
               <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
             )}
@@ -203,15 +358,16 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
           {/* 铅笔 Pencil */}
           <button
             title={_('Pencil (Textured & Light)')}
+            aria-label={_('Pencil (Textured & Light)')}
             className={clsx(
-              'btn btn-ghost btn-xs h-8 w-8 p-0 rounded-lg transition-all relative',
+              'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg transition-all relative shrink-0',
               currentTool === 'pencil'
                 ? 'bg-primary text-primary-content shadow-xs scale-105'
-                : 'text-base-content/80 hover:bg-base-300',
+                : 'text-base-content/80 hover:bg-base-300/70',
             )}
             onClick={() => handleToolClick('pencil')}
           >
-            <LuPencil size={16} />
+            <LuPencil size={15} />
             {currentTool === 'pencil' && (
               <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
             )}
@@ -220,15 +376,16 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
           {/* 荧光笔 Highlighter */}
           <button
             title={_('Highlighter (Multiply Blend)')}
+            aria-label={_('Highlighter (Multiply Blend)')}
             className={clsx(
-              'btn btn-ghost btn-xs h-8 w-8 p-0 rounded-lg transition-all relative',
+              'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg transition-all relative shrink-0',
               currentTool === 'highlighter'
                 ? 'bg-primary text-primary-content shadow-xs scale-105'
-                : 'text-base-content/80 hover:bg-base-300',
+                : 'text-base-content/80 hover:bg-base-300/70',
             )}
             onClick={() => handleToolClick('highlighter')}
           >
-            <LuHighlighter size={16} />
+            <LuHighlighter size={15} />
             {currentTool === 'highlighter' && (
               <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
             )}
@@ -237,141 +394,100 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
           {/* 橡皮擦 Eraser */}
           <button
             title={_('Stroke Eraser')}
+            aria-label={_('Stroke Eraser')}
             className={clsx(
-              'btn btn-ghost btn-xs h-8 w-8 p-0 rounded-lg transition-all relative',
+              'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg transition-all relative shrink-0',
               currentTool === 'eraser'
                 ? 'bg-primary text-primary-content shadow-xs scale-105'
-                : 'text-base-content/80 hover:bg-base-300',
+                : 'text-base-content/80 hover:bg-base-300/70',
             )}
             onClick={() => handleToolClick('eraser')}
           >
-            <LuEraser size={16} />
+            <LuEraser size={15} />
             {currentTool === 'eraser' && (
               <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
             )}
           </button>
 
-          {/* 套索选字与便签 Lasso Tool */}
-          <button
-            title={_('Lasso Text Selection & Sticky Notes')}
-            className={clsx(
-              'btn btn-ghost btn-xs h-8 w-8 p-0 rounded-lg transition-all relative',
-              currentTool === 'lasso'
-                ? 'bg-primary text-primary-content shadow-xs scale-105'
-                : 'text-base-content/80 hover:bg-base-300',
-            )}
-            onClick={() => handleToolClick('lasso')}
-          >
-            <LuLassoSelect size={16} />
-            {currentTool === 'lasso' && (
-              <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
-            )}
-          </button>
+          {/* 套索与形状（宽屏/平板横竖屏直接显示，窄屏手机收纳在更多菜单） */}
+          {!isCompact && (
+            <>
+              {/* 套索选字与便签 Lasso Tool */}
+              <button
+                title={_('Lasso Text Selection & Sticky Notes')}
+                aria-label={_('Lasso Text Selection & Sticky Notes')}
+                className={clsx(
+                  'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg transition-all relative shrink-0',
+                  currentTool === 'lasso'
+                    ? 'bg-primary text-primary-content shadow-xs scale-105'
+                    : 'text-base-content/80 hover:bg-base-300/70',
+                )}
+                onClick={() => handleToolClick('lasso')}
+              >
+                <LuLassoSelect size={15} />
+                {currentTool === 'lasso' && (
+                  <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
+                )}
+              </button>
 
-          {/* 形状 Shapes */}
-          <div className='relative'>
-            <button
-              title={_('Shapes Tool (Line, Rectangle, Circle, Arrow)')}
-              className={clsx(
-                'btn btn-ghost btn-xs h-8 w-8 p-0 rounded-lg transition-all',
-                currentTool === 'shape'
-                  ? 'bg-primary text-primary-content shadow-xs scale-105'
-                  : 'text-base-content/80 hover:bg-base-300',
-              )}
-              onClick={() => handleToolClick('shape')}
-            >
-              <LuShapes size={16} />
-            </button>
-
-            {showShapeMenu && (
-              <div className='absolute top-full mt-2 left-0 z-50 flex items-center gap-1 p-1 bg-base-100 rounded-xl shadow-xl border border-base-300 animate-in fade-in zoom-in-95'>
-                <button
-                  title={_('Straight Line')}
-                  className={clsx(
-                    'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg',
-                    currentShape === 'line' && 'bg-base-300',
-                  )}
-                  onClick={() => handleSelectShape('line')}
-                >
-                  <LuMinus size={15} />
-                </button>
-                <button
-                  title={_('Rectangle')}
-                  className={clsx(
-                    'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg',
-                    currentShape === 'rectangle' && 'bg-base-300',
-                  )}
-                  onClick={() => handleSelectShape('rectangle')}
-                >
-                  <LuSquare size={14} />
-                </button>
-                <button
-                  title={_('Circle / Ellipse')}
-                  className={clsx(
-                    'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg',
-                    currentShape === 'ellipse' && 'bg-base-300',
-                  )}
-                  onClick={() => handleSelectShape('ellipse')}
-                >
-                  <LuCircle size={14} />
-                </button>
-                <button
-                  title={_('Arrow')}
-                  className={clsx(
-                    'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg',
-                    currentShape === 'arrow' && 'bg-base-300',
-                  )}
-                  onClick={() => handleSelectShape('arrow')}
-                >
-                  <LuArrowRight size={15} />
-                </button>
-              </div>
-            )}
-          </div>
+              {/* 形状 Shapes */}
+              <button
+                title={_('Shapes Tool (Line, Rectangle, Circle, Arrow)')}
+                aria-label={_('Shapes Tool (Line, Rectangle, Circle, Arrow)')}
+                className={clsx(
+                  'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg transition-all relative shrink-0',
+                  currentTool === 'shape'
+                    ? 'bg-primary text-primary-content shadow-xs scale-105'
+                    : 'text-base-content/80 hover:bg-base-300/70',
+                )}
+                onClick={() => handleToolClick('shape')}
+              >
+                <LuShapes size={15} />
+                {currentTool === 'shape' && (
+                  <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
+                )}
+              </button>
+            </>
+          )}
         </div>
 
         {/* Divider */}
-        <div className='w-px h-5 bg-base-300/80 mx-0.5' />
+        <div className='w-px h-4 bg-base-300/80 mx-0.5 shrink-0' />
 
-        {/* Color Palette (hidden for eraser) */}
+        {/* Single Color Picker Button (hidden for eraser) */}
         {currentTool !== 'eraser' && (
-          <div className='flex items-center gap-1'>
-            {COLOR_PRESETS.map((hex) => {
-              const displayHex = hex === '#000000' && isDarkMode ? '#ffffff' : hex;
-              const isSelected = currentColor === hex || (hex === '#000000' && currentColor === '#ffffff');
-              return (
-                <button
-                  key={hex}
-                  className={clsx(
-                    'w-5 h-5 rounded-full transition-transform hover:scale-110 flex items-center justify-center border border-black/10',
-                    isSelected && 'ring-2 ring-primary ring-offset-1 ring-offset-base-100 scale-110',
-                  )}
-                  style={{ backgroundColor: displayHex }}
-                  onClick={() => setColor(hex === '#000000' && isDarkMode ? '#ffffff' : hex)}
-                  title={hex}
-                />
-              );
-            })}
-
-            {/* Custom Color Picker */}
-            <label
-              title={_('Custom Color')}
-              className='relative w-5 h-5 rounded-full cursor-pointer overflow-hidden border border-base-300 flex items-center justify-center bg-linear-to-tr from-rose-500 via-emerald-400 to-indigo-500'
-            >
-              <input
-                type='color'
-                value={activeColor}
-                onChange={(e) => setColor(e.target.value)}
-                className='opacity-0 absolute inset-0 cursor-pointer w-full h-full'
-              />
-            </label>
-          </div>
+          <button
+            title={_('Color')}
+            aria-label={_('Color')}
+            className={clsx(
+              'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg transition-all relative flex items-center justify-center shrink-0',
+              activeSubMenu === 'color'
+                ? 'bg-primary text-primary-content shadow-xs scale-105'
+                : 'text-base-content/80 hover:bg-base-300/70',
+            )}
+            onClick={() => {
+              setShowShapeMenu(false);
+              setShowCompactMoreMenu(false);
+              setActiveSubMenu((prev) => (prev === 'color' ? null : 'color'));
+            }}
+          >
+            <span
+              className={clsx(
+                'w-4 h-4 rounded-full border shadow-xs transition-transform',
+                activeSubMenu === 'color'
+                  ? 'border-primary-content/60 scale-105'
+                  : 'border-base-content/25',
+              )}
+              style={{ backgroundColor: activeColor }}
+            />
+            {activeSubMenu === 'color' && (
+              <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
+            )}
+          </button>
         )}
 
         {/* Divider */}
-        {currentTool !== 'eraser' && (
-          <div className='w-px h-5 bg-base-300/80 mx-0.5' />
-        )}
+        {currentTool !== 'eraser' && <div className='w-px h-4 bg-base-300/80 mx-0.5 shrink-0' />}
 
         {/* Palm Rejection / Stylus Only Toggle */}
         <button
@@ -380,79 +496,295 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
               ? _('Stylus Only Mode (Touch gestures paginate)')
               : _('Finger Drawing Allowed')
           }
+          aria-label={_('Stylus Only Mode (Touch gestures paginate)')}
           className={clsx(
-            'btn btn-ghost btn-xs h-8 px-2 rounded-lg gap-1 text-xs font-medium',
-            stylusOnly ? 'bg-primary/10 text-primary' : 'text-base-content/70',
+            'btn btn-ghost btn-xs h-7 rounded-lg gap-1 text-xs font-medium transition-all shrink-0',
+            isWide ? 'px-2' : 'w-7 p-0',
+            stylusOnly
+              ? 'bg-primary/15 text-primary font-semibold'
+              : 'text-base-content/70 hover:bg-base-300/70',
           )}
           onClick={() => setStylusOnly(!stylusOnly)}
         >
           {stylusOnly ? <LuPenTool size={14} /> : <LuHand size={14} />}
-          <span className='hidden sm:inline'>
-            {stylusOnly ? _('Stylus Only') : _('Finger Draw')}
-          </span>
+          {isWide && (
+            <span className='inline text-[11px] whitespace-nowrap'>
+              {stylusOnly ? _('Stylus Only') : _('Finger Draw')}
+            </span>
+          )}
         </button>
 
+        {/* Divider */}
+        <div className='w-px h-4 bg-base-300/80 mx-0.5 shrink-0' />
+
         {/* Undo / Redo */}
-        <div className='flex items-center gap-0.5'>
+        <div className='flex items-center gap-0.5 shrink-0'>
           <button
             title={_('Undo (Ctrl+Z)')}
+            aria-label={_('Undo (Ctrl+Z)')}
             disabled={!undoAvailable}
-            className='btn btn-ghost btn-xs h-8 w-8 p-0 rounded-lg text-base-content/80 disabled:opacity-30'
+            className='btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg text-base-content/80 disabled:opacity-30 shrink-0'
             onClick={handleUndo}
           >
-            <LuUndo2 size={16} />
+            <LuUndo2 size={15} />
           </button>
           <button
             title={_('Redo (Ctrl+Y)')}
+            aria-label={_('Redo (Ctrl+Y)')}
             disabled={!redoAvailable}
-            className='btn btn-ghost btn-xs h-8 w-8 p-0 rounded-lg text-base-content/80 disabled:opacity-30'
+            className='btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg text-base-content/80 disabled:opacity-30 shrink-0'
             onClick={handleRedo}
           >
-            <LuRedo2 size={16} />
+            <LuRedo2 size={15} />
           </button>
         </div>
 
-        {/* Clear Page */}
-        <button
-          title={_('Clear Current Page')}
-          className='btn btn-ghost btn-xs h-8 w-8 p-0 rounded-lg text-error hover:bg-error/10'
-          onClick={handleClearPage}
-        >
-          <LuTrash2 size={16} />
-        </button>
+        {/* In-Reader Handwriting Note Navigator (阅读界面内的手写笔记切换导航) */}
+        {notePages.length > 0 && (
+          <>
+            <div className='w-px h-4 bg-base-300/80 mx-0.5 shrink-0' />
+            <div
+              className='relative flex items-center bg-base-300/50 dark:bg-base-300/30 rounded-lg p-0.5 shrink-0'
+              ref={noteNavDropdownRef}
+            >
+              <button
+                type='button'
+                title={_('Previous Note Page')}
+                aria-label={_('Previous Note Page')}
+                disabled={!hasPrevNote}
+                className='btn btn-ghost btn-xs h-6 w-6 p-0 rounded-md text-base-content/70 hover:bg-base-200/90 disabled:opacity-25 shrink-0'
+                onClick={handleGoToPrevNote}
+              >
+                <PiCaretLeft size={14} />
+              </button>
 
-        {/* Export / Import */}
-        <button
-          title={_('Export / Import Handwriting')}
-          className='btn btn-ghost btn-xs h-8 w-8 p-0 rounded-lg text-base-content/80 hover:bg-base-200'
-          onClick={() => setShowExportDialog(true)}
-        >
-          <LuDownload size={16} />
-        </button>
+              <button
+                type='button'
+                title={_('Click to jump to note pages')}
+                className='btn btn-ghost btn-xs h-6 px-1.5 text-[11px] font-mono font-medium text-base-content/85 hover:bg-base-200/90 rounded-md shrink-0 whitespace-nowrap'
+                onClick={() => setShowNoteNavDropdown((v) => !v)}
+              >
+                <span>{currentNoteBadge}</span>
+              </button>
+
+              <button
+                type='button'
+                title={_('Next Note Page')}
+                aria-label={_('Next Note Page')}
+                disabled={!hasNextNote}
+                className='btn btn-ghost btn-xs h-6 w-6 p-0 rounded-md text-base-content/70 hover:bg-base-200/90 disabled:opacity-25 shrink-0'
+                onClick={handleGoToNextNote}
+              >
+                <PiCaretRight size={14} />
+              </button>
+
+              {/* Fast Jump Popover directly in the reader */}
+              {showNoteNavDropdown && (
+                <div
+                  className='pointer-events-auto absolute top-full mt-2 left-1/2 -translate-x-1/2 z-50 p-2 rounded-xl bg-base-100/98 backdrop-blur-md shadow-2xl border border-base-300 min-w-48 max-h-60 overflow-y-auto select-none text-xs'
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className='text-[10px] font-semibold text-base-content/50 uppercase tracking-wider px-2 py-1 border-b border-base-200/70 mb-1'>
+                    {_('Handwritten Pages')} ({notePages.length})
+                  </div>
+                  {notePages.map((pIdx: number) => {
+                    const isCur = pIdx === currentPageIndex;
+                    const strokeCount = allBookStrokes?.[pIdx]?.length || 0;
+                    return (
+                      <button
+                        key={pIdx}
+                        type='button'
+                        className={clsx(
+                          'w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors',
+                          isCur
+                            ? 'bg-primary text-primary-content font-medium'
+                            : 'hover:bg-base-200 text-base-content/80',
+                        )}
+                        onClick={() => {
+                          handleJumpToNotePage(pIdx);
+                          setShowNoteNavDropdown(false);
+                        }}
+                      >
+                        <span>{_('Page {{page}}', { page: pIdx + 1 })}</span>
+                        <span
+                          className={clsx(
+                            'text-[10px] font-mono',
+                            isCur ? 'text-primary-content/80' : 'text-base-content/50',
+                          )}
+                        >
+                          {strokeCount > 0 ? `${strokeCount} ${_('strokes')}` : _('Sticky note')}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  <div className='w-full h-px bg-base-200/80 my-1' />
+                  <button
+                    type='button'
+                    className='w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left text-primary hover:bg-primary/10 transition-colors font-medium text-[11px]'
+                    onClick={() => {
+                      setShowOverviewDialog(true);
+                      setShowNoteNavDropdown(false);
+                    }}
+                  >
+                    <LuNotebookTabs size={13} />
+                    <span>{_('Open All Notes Overview')}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Actions Group: Clear & Export (Direct buttons on wide/medium, ellipsis dropdown on compact) */}
+        {!isCompact ? (
+          <>
+            <div className='w-px h-4 bg-base-300/80 mx-0.5 shrink-0' />
+            {/* Clear Page */}
+            <button
+              title={_('Clear Current Page')}
+              aria-label={_('Clear Current Page')}
+              className='btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg text-error hover:bg-error/10 shrink-0'
+              onClick={handleClearPage}
+            >
+              <LuTrash2 size={15} />
+            </button>
+
+            {/* Export / Import */}
+            <button
+              title={_('Export / Import Handwriting')}
+              aria-label={_('Export / Import Handwriting')}
+              className='btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg text-base-content/80 hover:bg-base-300/70 shrink-0'
+              onClick={() => setShowExportDialog(true)}
+            >
+              <LuDownload size={15} />
+            </button>
+
+            {/* Notes Overview */}
+            <button
+              title={_('All Notes Overview')}
+              aria-label={_('All Notes Overview')}
+              className='btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg text-base-content/80 hover:bg-base-300/70 shrink-0'
+              onClick={() => setShowOverviewDialog(true)}
+            >
+              <LuNotebookTabs size={15} />
+            </button>
+          </>
+        ) : (
+          <>
+            <div className='w-px h-4 bg-base-300/80 mx-0.5 shrink-0' />
+            {/* Compact More Actions Dropdown */}
+            <div className='relative shrink-0' ref={moreMenuRef}>
+              <button
+                title={_('More Options')}
+                aria-label={_('More Options')}
+                className={clsx(
+                  'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg text-base-content/80 shrink-0',
+                  showCompactMoreMenu ? 'bg-base-300' : 'hover:bg-base-300/70',
+                )}
+                onClick={() => {
+                  setActiveSubMenu(null);
+                  setShowShapeMenu(false);
+                  setShowCompactMoreMenu((v) => !v);
+                }}
+              >
+                <LuEllipsis size={15} />
+              </button>
+
+              {showCompactMoreMenu && (
+                <div className='absolute top-full mt-2 right-0 z-50 flex flex-col gap-1 p-1.5 min-w-44 bg-base-100/98 backdrop-blur-md rounded-xl shadow-2xl border border-base-300 animate-in fade-in zoom-in-95 select-none text-xs'>
+                  <button
+                    className={clsx(
+                      'flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left transition-colors',
+                      currentTool === 'lasso'
+                        ? 'bg-primary text-primary-content font-medium'
+                        : 'hover:bg-base-200 text-base-content/80',
+                    )}
+                    onClick={() => {
+                      handleToolClick('lasso');
+                      setShowCompactMoreMenu(false);
+                    }}
+                  >
+                    <LuLassoSelect size={15} />
+                    <span>{_('Lasso Text Selection & Sticky Notes')}</span>
+                  </button>
+                  <button
+                    className={clsx(
+                      'flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left transition-colors',
+                      currentTool === 'shape'
+                        ? 'bg-primary text-primary-content font-medium'
+                        : 'hover:bg-base-200 text-base-content/80',
+                    )}
+                    onClick={() => {
+                      handleToolClick('shape');
+                      setShowCompactMoreMenu(false);
+                    }}
+                  >
+                    <LuShapes size={15} />
+                    <span>{_('Shapes Tool (Line, Rectangle, Circle, Arrow)')}</span>
+                  </button>
+                  <div className='w-full h-px bg-base-200/80 my-0.5' />
+                  <button
+                    className='flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-error hover:bg-error/10 transition-colors'
+                    onClick={() => {
+                      handleClearPage();
+                      setShowCompactMoreMenu(false);
+                    }}
+                  >
+                    <LuTrash2 size={15} />
+                    <span>{_('Clear Current Page')}</span>
+                  </button>
+                  <button
+                    className='flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left hover:bg-base-200 text-base-content/80 transition-colors'
+                    onClick={() => {
+                      setShowExportDialog(true);
+                      setShowCompactMoreMenu(false);
+                    }}
+                  >
+                    <LuDownload size={15} />
+                    <span>{_('Export / Import Handwriting')}</span>
+                  </button>
+                  <button
+                    className='flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left hover:bg-base-200 text-base-content/80 transition-colors'
+                    onClick={() => {
+                      setShowOverviewDialog(true);
+                      setShowCompactMoreMenu(false);
+                    }}
+                  >
+                    <LuNotebookTabs size={15} />
+                    <span>{_('All Notes Overview')}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
 
         {/* Close Button */}
+        <div className='w-px h-4 bg-base-300/80 mx-0.5 shrink-0' />
         <button
           title={_('Close Handwriting Toolbar')}
-          className='btn btn-ghost btn-xs h-8 w-8 p-0 rounded-lg text-base-content/60 hover:text-base-content hover:bg-base-200'
+          aria-label={_('Close Handwriting Toolbar')}
+          className='btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg text-base-content/60 hover:text-base-content hover:bg-base-300/70 shrink-0'
           onClick={() => toggleHandwriting(bookKey, false)}
         >
-          <LuX size={16} />
+          <LuX size={15} />
         </button>
       </div>
 
-      {/* Floating Sub-Toolbar: Below primary toolbar, never on the same horizontal row */}
+      {/* Floating Sub-Toolbar: Positioned directly beneath HeaderBar */}
       {activeSubMenu && (
         <div
           ref={subMenuRef}
-          className='pointer-events-auto absolute left-1/2 -translate-x-1/2 z-50 p-3.5 rounded-2xl bg-base-100/95 backdrop-blur-md shadow-2xl border border-base-300/80 animate-in fade-in zoom-in-95 duration-150 select-none'
-          style={{ top: `${topOffset + 48}px` }}
+          className='pointer-events-auto absolute top-full mt-2 left-1/2 -translate-x-1/2 z-50 p-3.5 rounded-2xl bg-base-100/98 backdrop-blur-md shadow-2xl border border-base-300/80 animate-in fade-in zoom-in-95 duration-150 select-none max-w-[calc(100vw-32px)]'
           onPointerDown={(e) => e.stopPropagation()}
           onPointerMove={(e) => e.stopPropagation()}
           onPointerUp={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Sub-toolbar for Pen / Pencil / Highlighter: Continuous Stroke Width Slider */}
-          {(activeSubMenu === 'pen' || activeSubMenu === 'pencil' || activeSubMenu === 'highlighter') && (
+          {(activeSubMenu === 'pen' ||
+            activeSubMenu === 'pencil' ||
+            activeSubMenu === 'highlighter') && (
             <div className='flex flex-col gap-2.5 min-w-56'>
               <div className='flex items-center justify-between text-xs'>
                 <span className='font-medium text-base-content/80'>
@@ -512,10 +844,8 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
 
           {/* Sub-toolbar for Eraser: Dual Mode (Full Stroke vs Partial Area) + Radius Slider */}
           {activeSubMenu === 'eraser' && (
-            <div className='flex flex-col gap-2.5 min-w-64'>
-              <div className='text-xs font-medium text-base-content/80'>
-                {_('Eraser Mode')}
-              </div>
+            <div className='flex flex-col gap-2.5 min-w-60'>
+              <div className='text-xs font-medium text-base-content/80'>{_('Eraser Mode')}</div>
 
               {/* Dual Mode Switcher */}
               <div className='grid grid-cols-2 gap-1.5 p-1 bg-base-200/80 rounded-xl'>
@@ -588,6 +918,118 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
               </div>
             </div>
           )}
+
+          {/* Sub-toolbar for Color: Preset Palette + Custom Color Picker */}
+          {activeSubMenu === 'color' && (
+            <div className='flex flex-col gap-2.5 min-w-60'>
+              <div className='flex items-center justify-between text-xs'>
+                <span className='font-medium text-base-content/80'>{_('Stroke Color')}</span>
+                <div className='flex items-center gap-1.5'>
+                  <span
+                    className='w-3.5 h-3.5 rounded-full border border-base-content/20 shadow-xs'
+                    style={{ backgroundColor: activeColor }}
+                  />
+                  <span className='font-mono font-semibold text-primary px-1.5 py-0.5 rounded bg-primary/10 text-[11px]'>
+                    {activeColor.toUpperCase()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Preset Color Swatches */}
+              <div className='flex items-center justify-between gap-1.5 py-1'>
+                {COLOR_PRESETS.map((hex) => {
+                  const displayHex = hex === '#000000' && isDarkMode ? '#ffffff' : hex;
+                  const isSelected =
+                    currentColor === hex || (hex === '#000000' && currentColor === '#ffffff');
+                  return (
+                    <button
+                      key={hex}
+                      type='button'
+                      className={clsx(
+                        'w-6 h-6 rounded-full transition-transform hover:scale-115 flex items-center justify-center border border-black/10 dark:border-white/10 shrink-0 cursor-pointer',
+                        isSelected &&
+                          'ring-2 ring-primary ring-offset-2 ring-offset-base-100 scale-110 shadow-xs',
+                      )}
+                      style={{ backgroundColor: displayHex }}
+                      onClick={() => setColor(hex === '#000000' && isDarkMode ? '#ffffff' : hex)}
+                      title={hex}
+                    />
+                  );
+                })}
+              </div>
+
+              {/* Custom Color Option */}
+              <div className='flex items-center justify-between pt-1.5 border-t border-base-200/80'>
+                <label
+                  title={_('Custom Color')}
+                  className='flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs font-medium text-base-content/80 hover:bg-base-200/80 cursor-pointer transition-colors w-full'
+                >
+                  <span className='relative w-5 h-5 rounded-full overflow-hidden border border-base-300 flex items-center justify-center bg-linear-to-tr from-rose-500 via-emerald-400 to-indigo-500 shrink-0 shadow-xs'>
+                    <input
+                      type='color'
+                      value={activeColor}
+                      onInput={(e) => setColor((e.target as HTMLInputElement).value)}
+                      onChange={(e) => setColor(e.target.value)}
+                      className='opacity-0 absolute inset-0 cursor-pointer w-full h-full'
+                    />
+                  </span>
+                  <span className='flex-1'>{_('Custom Color')}</span>
+                  <LuPalette size={14} className='text-base-content/60' />
+                </label>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Shapes Dropdown Sub-menu */}
+      {showShapeMenu && (
+        <div
+          ref={shapeMenuRef}
+          className='pointer-events-auto absolute top-full mt-2 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 p-1 bg-base-100 rounded-xl shadow-xl border border-base-300 animate-in fade-in zoom-in-95 select-none'
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            title={_('Straight Line')}
+            className={clsx(
+              'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg',
+              currentShape === 'line' && 'bg-base-300',
+            )}
+            onClick={() => handleSelectShape('line')}
+          >
+            <LuMinus size={15} />
+          </button>
+          <button
+            title={_('Rectangle')}
+            className={clsx(
+              'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg',
+              currentShape === 'rectangle' && 'bg-base-300',
+            )}
+            onClick={() => handleSelectShape('rectangle')}
+          >
+            <LuSquare size={14} />
+          </button>
+          <button
+            title={_('Circle / Ellipse')}
+            className={clsx(
+              'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg',
+              currentShape === 'ellipse' && 'bg-base-300',
+            )}
+            onClick={() => handleSelectShape('ellipse')}
+          >
+            <LuCircle size={14} />
+          </button>
+          <button
+            title={_('Arrow')}
+            className={clsx(
+              'btn btn-ghost btn-xs h-7 w-7 p-0 rounded-lg',
+              currentShape === 'arrow' && 'bg-base-300',
+            )}
+            onClick={() => handleSelectShape('arrow')}
+          >
+            <LuArrowRight size={15} />
+          </button>
         </div>
       )}
 
@@ -596,12 +1038,25 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
           bookKey={bookKey}
           isOpen={showExportDialog}
           onClose={() => setShowExportDialog(false)}
-          containerWidth={containerWidth}
-          containerHeight={containerHeight}
+          containerWidth={containerWidth || effectiveWidth}
+          containerHeight={
+            containerHeight || (typeof window !== 'undefined' ? window.innerHeight : 1200)
+          }
+        />
+      )}
+
+      {showOverviewDialog && (
+        <HandwritingOverviewDialog
+          bookKey={bookKey}
+          isOpen={showOverviewDialog}
+          onClose={() => setShowOverviewDialog(false)}
+          containerWidth={containerWidth || effectiveWidth}
+          containerHeight={
+            containerHeight || (typeof window !== 'undefined' ? window.innerHeight : 1200)
+          }
         />
       )}
     </>
   );
 };
 export default HandwritingToolbar;
-

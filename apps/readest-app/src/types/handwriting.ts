@@ -87,7 +87,51 @@ export interface HandwritingBookData {
   bookHash: string;
   pages: Record<number, HandwritingStroke[]>;
   stickyNotes?: Record<number, HandwritingStickyNote[]>;
+  pageTexts?: Record<number, string>;
+  aspectRatios?: Record<number, number>;
   updatedAt: number;
 }
 
 export type HandwritingExportFormat = 'pdf' | 'svg' | 'png' | 'json';
+
+export interface HandwritingPageSummary {
+  /** Unique composite key: `${bookHash}_${pageIndex}` */
+  id: string;
+  bookHash: string;
+  bookTitle: string;
+  pageIndex: number;
+  pageNumber: number; // pageIndex + 1
+  cfi?: string;
+  strokes: HandwritingStroke[];
+  stickyNotes: HandwritingStickyNote[];
+  strokeCount: number;
+  stickyNoteCount: number;
+  toolsUsed: HandwritingTool[];
+  colorsUsed: string[];
+  textSnippets: string[];
+  pageText?: string;
+  pageSnapshot?: string;
+  aspectRatio?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type HandwritingFilterKind = 'all' | 'strokes' | 'stickynotes' | 'anchors';
+
+export type HandwritingSortOrder =
+  | 'updated-desc'
+  | 'updated-asc'
+  | 'created-desc'
+  | 'page-asc'
+  | 'page-desc'
+  | 'strokes-desc';
+
+export interface HandwritingQueryOptions {
+  bookHash?: string;
+  filterKind?: HandwritingFilterKind;
+  tool?: HandwritingTool | 'all';
+  color?: string;
+  searchQuery?: string;
+  dateRange?: 'all' | 'today' | 'week' | 'month';
+  sortOrder?: HandwritingSortOrder;
+}

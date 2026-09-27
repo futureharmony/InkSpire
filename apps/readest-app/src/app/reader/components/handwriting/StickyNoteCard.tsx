@@ -1,10 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
-import {
-  LuPin,
-  LuTrash2,
-  LuMove,
-} from 'react-icons/lu';
+import { LuPin, LuTrash2, LuMove } from 'react-icons/lu';
 import { HandwritingStickyNote, StickyNoteColor } from '@/types/handwriting';
 import { useHandwritingStore } from '@/store/handwritingStore';
 import { persistPageStickyNotes } from '@/services/handwritingService';
@@ -17,7 +13,10 @@ interface StickyNoteCardProps {
   pageIndex: number;
 }
 
-const COLOR_CLASSES: Record<StickyNoteColor, { bg: string; border: string; badge: string; accent: string }> = {
+const COLOR_CLASSES: Record<
+  StickyNoteColor,
+  { bg: string; border: string; badge: string; accent: string }
+> = {
   yellow: {
     bg: 'bg-amber-50 dark:bg-amber-950/80 text-amber-950 dark:text-amber-100',
     border: 'border-amber-300 dark:border-amber-700/60 shadow-amber-500/10',
@@ -64,7 +63,12 @@ export const StickyNoteCard: React.FC<StickyNoteCardProps> = ({
   const removeStickyNote = useHandwritingStore((state) => state.removeStickyNote);
   const getStickyNotes = useHandwritingStore((state) => state.getStickyNotes);
 
-  const dragStartRef = useRef<{ clientX: number; clientY: number; initX: number; initY: number } | null>(null);
+  const dragStartRef = useRef<{
+    clientX: number;
+    clientY: number;
+    initX: number;
+    initY: number;
+  } | null>(null);
   const [position, setPosition] = useState({ x: note.x, y: note.y });
 
   // Update position and content if props change
@@ -193,7 +197,9 @@ export const StickyNoteCard: React.FC<StickyNoteCardProps> = ({
               className={clsx(
                 'w-3.5 h-3.5 rounded-full transition-transform',
                 COLOR_CLASSES[c].badge,
-                note.color === c ? 'ring-2 ring-offset-1 ring-black/40 dark:ring-white/60 scale-110' : 'opacity-70 hover:opacity-100',
+                note.color === c
+                  ? 'ring-2 ring-offset-1 ring-black/40 dark:ring-white/60 scale-110'
+                  : 'opacity-70 hover:opacity-100',
               )}
             />
           ))}
@@ -221,7 +227,12 @@ export const StickyNoteCard: React.FC<StickyNoteCardProps> = ({
 
       {/* Selected text quote if any */}
       {note.selectedText && (
-        <div className={clsx('px-3 py-1.5 text-xs font-serif italic border-b border-black/5 dark:border-white/5 opacity-85 line-clamp-3', colors.accent)}>
+        <div
+          className={clsx(
+            'px-3 py-1.5 text-xs font-serif italic border-b border-black/5 dark:border-white/5 opacity-85 line-clamp-3',
+            colors.accent,
+          )}
+        >
           “{note.selectedText}”
         </div>
       )}
@@ -241,7 +252,9 @@ export const StickyNoteCard: React.FC<StickyNoteCardProps> = ({
       {/* Footer info timestamp */}
       <div className='px-2.5 pb-1.5 flex justify-between items-center text-[10px] opacity-45 select-none'>
         <span>第 {pageIndex + 1} 页</span>
-        <span>{new Date(note.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+        <span>
+          {new Date(note.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </span>
       </div>
     </div>
   );

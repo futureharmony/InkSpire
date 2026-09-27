@@ -1,13 +1,5 @@
-import {
-  HandwritingPoint,
-  HandwritingStroke,
-  HandwritingTextAnchor,
-} from '@/types/handwriting';
-import {
-  getCaretPointFromPoint,
-  getWordRangeFromPoint,
-  getRangeRectInWebview,
-} from '@/utils/sel';
+import { HandwritingPoint, HandwritingStroke, HandwritingTextAnchor } from '@/types/handwriting';
+import { getCaretPointFromPoint, getWordRangeFromPoint, getRangeRectInWebview } from '@/utils/sel';
 
 /** Standard reference width for stroke sizing */
 export const REFERENCE_WIDTH = 1000;
@@ -413,13 +405,7 @@ export function renderStrokeToCanvas(
     const px = p.x * width;
     const py = p.y * height;
     ctx.beginPath();
-    ctx.arc(
-      px,
-      py,
-      stroke.tool === 'pencil' ? baseWidth * 0.25 : baseWidth * 0.5,
-      0,
-      Math.PI * 2,
-    );
+    ctx.arc(px, py, stroke.tool === 'pencil' ? baseWidth * 0.25 : baseWidth * 0.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
     return;
@@ -536,11 +522,7 @@ export function renderStrokesToCanvas(
 }
 
 /** Generate an SVG path data string for a freehand stroke */
-export function strokeToSvgPath(
-  stroke: HandwritingStroke,
-  width: number,
-  height: number,
-): string {
+export function strokeToSvgPath(stroke: HandwritingStroke, width: number, height: number): string {
   const points = stroke.points;
   if (points.length === 0) return '';
   if (points.length === 1) {
@@ -1011,9 +993,7 @@ function createSimpleImagePdf(
     pageObjRefs.push(`${3 + i * 3} 0 R`);
   }
   recordObject(2);
-  addString(
-    `<< /Type /Pages /Kids [${pageObjRefs.join(' ')}] /Count ${numPages} >>\nendobj\n`,
-  );
+  addString(`<< /Type /Pages /Kids [${pageObjRefs.join(' ')}] /Count ${numPages} >>\nendobj\n`);
 
   // For each page:
   // Obj 3 + i*3: Page
@@ -1065,9 +1045,7 @@ function createSimpleImagePdf(
   }
 
   // Trailer
-  addString(
-    `trailer\n<< /Size ${xref.length} /Root 1 0 R >>\nstartxref\n${startXref}\n%%EOF\n`,
-  );
+  addString(`trailer\n<< /Size ${xref.length} /Root 1 0 R >>\nstartxref\n${startXref}\n%%EOF\n`);
 
   return new Blob(parts, { type: 'application/pdf' });
 }
@@ -1222,3 +1200,130 @@ export function extractTextAnchorForStroke(
   return undefined;
 }
 
+/**
+ * Extract visible text content of the current reading page from Foliate's view renderer.
+ */
+export function extractVisiblePageText(
+  view: unknown,
+  containerRect?: { left: number; top: number; width: number; height: number } | null,
+  maxChars = 600,
+): string {
+  if (!view) return '';
+  const foliateView = view as {
+    renderer?: {
+      getContents?: () => Array<{ doc: Document; index: number }>;
+    };
+  };
+  const getContents = foliateView.renderer?.getContents;
+  if (typeof getContents !== 'function') return '';
+
+  try {
+    const contents = getContents.call(foliateView.renderer);
+    if (!Array.isArray(contents) || contents.length === 0) return '';
+
+    const cLeft = containerRect?.left ?? 0;
+    const cTop = containerRect?.top ?? 0;
+    const cWidth =
+      containerRect?.width ?? (typeof window !== 'undefined' ? window.innerWidth : 1000);
+    const cHeight =
+      containerRect?.height ?? (typeof window !== 'undefined' ? window.innerHeight : 1400);
+
+    const collectedParagraphs: string[] = [];
+
+    for (const item of contents) {
+      const { doc } = item;
+      if (!doc || !doc.body) continue;
+
+      const frame = doc.defaultView?.frameElement?.getBoundingClientRect();
+      if (frame && (frame.bottom < cTop || frame.top > cTop + cHeight)) {
+        continue;
+      }
+
+      // Query block elements with text
+      const elements = doc.body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote, div');
+      for (let i = 0; i < elements.length; i++) {
+        const el = elements[i];
+        if (!el || !el.textContent || el.children.length > 3) continue;
+        const text = el.textContent.trim();
+        if (!text || text.length < 5) continue;
+
+        try {
+          const rect = el.getBoundingClientRect();
+          const globalTop = (frame?.top ?? 0) + rect.top;
+          const globalBottom = (frame?.top ?? 0) + rect.bottom;
+          const globalLeft = (frame?.left ?? 0) + rect.left;
+          const globalRight = (frame?.left ?? 0) + rect.right;
+          if (
+            globalBottom >= cTop + 5 &&
+            globalTop <= cTop + cHeight - 5 &&
+            globalRight >= cLeft &&
+            globalLeft <= cLeft + cWidth
+          ) {
+            collectedParagraphs.push(text);
+            if (collectedParagraphs.join('\n\n').length >= maxChars) break;
+          }
+        } catch {
+          // ignore layout query errors
+        }
+      }
+
+      if (collectedParagraphs.length > 0) break;
+    }
+
+    if (collectedParagraphs.length > 0) {
+      return collectedParagraphs.join('\n\n').slice(0, maxChars);
+    }
+
+    // Fallback: search body text
+    for (const item of contents) {
+      const text = item.doc?.body?.textContent?.trim();
+      if (text) {
+        return text.slice(0, maxChars);
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return '';
+}
+
+/**
+ * Convert an image ArrayBuffer (JPEG or PNG) into a downscaled data URL thumbnail.
+ */
+export async function arrayBufferToThumbnailDataUrl(
+  buffer: ArrayBuffer,
+  maxWidth = 360,
+): Promise<string> {
+  if (!buffer || buffer.byteLength === 0) return '';
+  const blob = new Blob([buffer], { type: 'image/jpeg' });
+
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bmp = await createImageBitmap(blob);
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, maxWidth / bmp.width);
+      canvas.width = Math.max(1, Math.round(bmp.width * scale));
+      canvas.height = Math.max(1, Math.round(bmp.height * scale));
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        bmp.close();
+        return dataUrl;
+      }
+      bmp.close();
+    } catch {
+      // fallback to FileReader
+    }
+  }
+
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      resolve((reader.result as string) || '');
+    };
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(blob);
+  });
+}

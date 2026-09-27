@@ -4,9 +4,10 @@ import { FaChevronDown, FaSearch } from 'react-icons/fa';
 import { MdManageSearch } from 'react-icons/md';
 import { PiPlus } from 'react-icons/pi';
 import { PiSelectionAll, PiSelectionAllFill } from 'react-icons/pi';
-import { PiDotsThreeCircle } from 'react-icons/pi';
+import { PiDotsThreeCircle, PiNotePencil } from 'react-icons/pi';
 import { MdOutlineMenu } from 'react-icons/md';
 import { IoMdCloseCircle } from 'react-icons/io';
+import { eventDispatcher } from '@/utils/event';
 
 import { useEnv } from '@/context/EnvContext';
 import { useThemeStore } from '@/store/themeStore';
@@ -251,6 +252,14 @@ const LibraryHeader: React.FC<LibraryHeaderProps> = ({
           </div>
         ) : (
           <div className='flex h-full items-center gap-x-2 sm:gap-x-4'>
+            <button
+              title={_('Handwriting Notes')}
+              aria-label={_('Handwriting Notes')}
+              className='btn btn-ghost h-8 min-h-8 w-8 p-0'
+              onClick={() => eventDispatcher.dispatch('show-handwriting-overview')}
+            >
+              <PiNotePencil role='none' size={iconSize18} />
+            </button>
             <Dropdown
               label={_('View Menu')}
               className='exclude-title-bar-mousedown dropdown-bottom dropdown-end'

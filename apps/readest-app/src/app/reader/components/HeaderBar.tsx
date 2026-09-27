@@ -30,10 +30,12 @@ import QuickActionMenu from './annotator/QuickActionMenu';
 import SidebarToggler from './SidebarToggler';
 import BookmarkToggler from './BookmarkToggler';
 import HandwritingToggler from './handwriting/HandwritingToggler';
+import HandwritingToolbar from './handwriting/HandwritingToolbar';
 import NotebookToggler from './NotebookToggler';
 import TranslationToggler from './TranslationToggler';
 import ViewMenu from './ViewMenu';
 import SyncInfoDialog from './SyncInfoDialog';
+import { useHandwritingStore } from '@/store/handwritingStore';
 
 interface HeaderBarProps {
   bookKey: string;
@@ -86,6 +88,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isMetaHashDialogOpen, setIsMetaHashDialogOpen] = useState(false);
+  const [isHandwritingSubMenuOpen, setIsHandwritingSubMenuOpen] = useState(false);
   const [headerWidth, setHeaderWidth] = useState(0);
   const view = getView(bookKey);
   const iconSize18 = useResponsiveSize(18);
@@ -158,9 +161,11 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
     );
   }, []);
 
+  const { activeBookKey } = useHandwritingStore();
+  const isHandwritingActive = activeBookKey === bookKey;
   const isHeaderCompact = headerWidth > 0 && headerWidth < 350;
   const insets = window.innerWidth < 640 ? screenInsets : gridInsets;
-  const isHeaderVisible = hoveredBookKey === bookKey || isDropdownOpen;
+  const isHeaderVisible = hoveredBookKey === bookKey || isDropdownOpen || isHandwritingSubMenuOpen;
   const isMobile = appService?.isMobile || window.innerWidth < 640;
   const forceMobileLayout = isForcedMobileLayout(appService?.isMobile);
   const triggerHeight = viewSettings ? getHeaderTriggerHeight(gridInsets.top, viewSettings) : 0;
@@ -244,7 +249,7 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
           }
         }}
       >
-        <div className='header-tools-start bg-base-100 sidebar-bookmark-toggler z-20 flex h-full min-w-0 items-center gap-x-4 pe-2 max-[350px]:gap-x-2'>
+        <div className='header-tools-start bg-base-100 sidebar-bookmark-toggler z-20 flex h-full min-w-0 items-center gap-x-4 pe-2 max-[350px]:gap-x-2 shrink-0'>
           {/* h-full so this scroller spans the whole bar: `overflow-x-auto`
               also clips vertically, and shrink-wrapped to the 32px icons it
               cut the buttons' touch halos back down to 32px (#5401). */}
@@ -270,70 +275,90 @@ const HeaderBar: React.FC<HeaderBarProps> = ({
             >
               <VscLibrary size={iconSize18} className='fill-base-content' />
             </button>
-            <BookmarkToggler bookKey={bookKey} />
-            <HandwritingToggler bookKey={bookKey} />
-            <TranslationToggler bookKey={bookKey} />
-          </div>
-          {enableAnnotationQuickActions && (
-            <Dropdown
-              label={
-                annotationQuickAction
-                  ? _('Disable Quick Action')
-                  : _('Enable Quick Action on Selection')
-              }
-              className='exclude-title-bar-mousedown dropdown-bottom dropdown-center'
-              menuClassName='relative!'
-              buttonClassName={clsx(
-                'btn btn-ghost h-8 min-h-8 w-8 p-0',
-                viewSettings?.annotationQuickAction && 'bg-base-300/50',
-              )}
-              toggleButton={
-                annotationQuickAction === 'highlight' || annotationQuickAction === null ? (
-                  <HighlighterIcon
-                    size={iconSize18}
-                    tipColor={annotationQuickAction === null ? '#8F8F8F' : highlightHexColor}
-                    tipStyle={{
-                      opacity: annotationQuickAction === null ? 0.5 : 0.8,
-                      mixBlendMode: isDarkMode ? 'screen' : 'multiply',
-                    }}
-                  />
-                ) : (
-                  <AnnotationToolQuickActionIcon size={iconSize18} />
-                )
-              }
-              onToggle={handleToggleDropdown}
-            >
-              <QuickActionMenu
-                selectedAction={viewSettings.annotationQuickAction}
-                onActionSelect={handleAnnotationQuickActionSelect}
-              />
-            </Dropdown>
-          )}
-        </div>
-
-        <div
-          role='contentinfo'
-          aria-label={_('Title') + ' - ' + bookTitle}
-          className={clsx(
-            'header-title z-15 bg-base-100 pointer-events-none hidden flex-1 items-center justify-center sm:flex',
-            !windowButtonVisible && 'absolute inset-0',
-            isHeaderCompact && 'hidden!',
-          )}
-          {...getBookDataAttributes(bookTitle, bookData?.book?.metadata)}
-        >
-          <div
-            aria-hidden='true'
-            className={clsx(
-              'line-clamp-1 text-center text-xs font-semibold',
-              !windowButtonVisible && 'max-w-[50%]',
+            {(!isHandwritingActive || (headerWidth > 0 && headerWidth >= 1200)) && (
+              <>
+                <BookmarkToggler bookKey={bookKey} />
+                <TranslationToggler bookKey={bookKey} />
+              </>
             )}
-          >
-            {bookTitle}
+            <HandwritingToggler bookKey={bookKey} />
           </div>
+          {enableAnnotationQuickActions &&
+            (!isHandwritingActive || (headerWidth > 0 && headerWidth >= 1250)) && (
+              <Dropdown
+                label={
+                  annotationQuickAction
+                    ? _('Disable Quick Action')
+                    : _('Enable Quick Action on Selection')
+                }
+                className='exclude-title-bar-mousedown dropdown-bottom dropdown-center'
+                menuClassName='relative!'
+                buttonClassName={clsx(
+                  'btn btn-ghost h-8 min-h-8 w-8 p-0',
+                  viewSettings?.annotationQuickAction && 'bg-base-300/50',
+                )}
+                toggleButton={
+                  annotationQuickAction === 'highlight' || annotationQuickAction === null ? (
+                    <HighlighterIcon
+                      size={iconSize18}
+                      tipColor={annotationQuickAction === null ? '#8F8F8F' : highlightHexColor}
+                      tipStyle={{
+                        opacity: annotationQuickAction === null ? 0.5 : 0.8,
+                        mixBlendMode: isDarkMode ? 'screen' : 'multiply',
+                      }}
+                    />
+                  ) : (
+                    <AnnotationToolQuickActionIcon size={iconSize18} />
+                  )
+                }
+                onToggle={handleToggleDropdown}
+              >
+                <QuickActionMenu
+                  selectedAction={viewSettings.annotationQuickAction}
+                  onActionSelect={handleAnnotationQuickActionSelect}
+                />
+              </Dropdown>
+            )}
         </div>
 
-        <div className='header-tools-end bg-base-100 z-20 ms-auto flex h-full min-w-max items-center gap-x-4 ps-2 max-[350px]:gap-x-2'>
-          <NotebookToggler bookKey={bookKey} />
+        {isHandwritingActive ? (
+          <div className='header-handwriting-container z-25 flex flex-1 items-center justify-center min-w-0 px-1'>
+            <HandwritingToolbar
+              bookKey={bookKey}
+              headerWidth={headerWidth}
+              containerWidth={
+                headerWidth || (typeof window !== 'undefined' ? window.innerWidth : 800)
+              }
+              containerHeight={typeof window !== 'undefined' ? window.innerHeight : 1200}
+              contentInsets={screenInsets}
+              onSubMenuOpenChange={setIsHandwritingSubMenuOpen}
+            />
+          </div>
+        ) : (
+          <div
+            role='contentinfo'
+            aria-label={_('Title') + ' - ' + bookTitle}
+            className={clsx(
+              'header-title z-15 bg-base-100 pointer-events-none hidden flex-1 items-center justify-center sm:flex',
+              !windowButtonVisible && 'absolute inset-0',
+              isHeaderCompact && 'hidden!',
+            )}
+            {...getBookDataAttributes(bookTitle, bookData?.book?.metadata)}
+          >
+            <div
+              aria-hidden='true'
+              className={clsx(
+                'line-clamp-1 text-center text-xs font-semibold',
+                !windowButtonVisible && 'max-w-[50%]',
+              )}
+            >
+              {bookTitle}
+            </div>
+          </div>
+        )}
+
+        <div className='header-tools-end bg-base-100 z-20 ms-auto flex h-full min-w-max items-center gap-x-4 ps-2 max-[350px]:gap-x-2 shrink-0'>
+          {!isHandwritingActive && <NotebookToggler bookKey={bookKey} />}
           <Dropdown
             label={_('View Options')}
             containerClassName='h-8'

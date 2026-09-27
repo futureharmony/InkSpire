@@ -2,6 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import HeaderBar from '@/app/reader/components/HeaderBar';
+import { useHandwritingStore } from '@/store/handwritingStore';
 
 // jsdom ships no ResizeObserver, and HeaderBar constructs one to track its own
 // width. Same stub pattern as popup-resting-triangle.test.
@@ -31,10 +32,13 @@ vi.mock('@/store/themeStore', () => ({
 vi.mock('@/store/sidebarStore', () => ({
   useSidebarStore: () => ({ isSideBarVisible: false, getIsSideBarVisible: () => false }),
 }));
+let mockHoveredBookKey: string | null = 'book-1';
 vi.mock('@/store/readerStore', () => ({
   useReaderStore: () => ({
     bookKeys: ['book-1'],
-    hoveredBookKey: 'book-1',
+    get hoveredBookKey() {
+      return mockHoveredBookKey;
+    },
     getView: () => null,
     getViewSettings: () => ({ enableAnnotationQuickActions: false }),
     setHoveredBookKey: vi.fn(),
@@ -105,6 +109,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   useEnvMock.mockReset();
   currentBookData = null;
+  mockHoveredBookKey = 'book-1';
 });
 
 describe('HeaderBar sidebar toggle', () => {
@@ -180,5 +185,37 @@ describe('HeaderBar book metadata data attributes (#5776)', () => {
     expect(title.getAttribute('data-book-title')).toBe('Book');
     expect(title.hasAttribute('data-book-series')).toBe(false);
     expect(title.hasAttribute('data-book-series-index')).toBe(false);
+  });
+});
+
+describe('HeaderBar handwriting toolbar integration', () => {
+  it('replaces header-title with header-handwriting-toolbar when handwriting is active', () => {
+    useEnvMock.mockReturnValue({ envConfig: {}, appService: { isMobile: false } });
+    setViewport(1440, 900);
+    const { container } = renderHeader();
+
+    // Normal mode: book title is visible, handwriting toolbar is absent
+    expect(container.querySelector('.header-title')).not.toBeNull();
+    expect(container.querySelector('.header-handwriting-toolbar')).toBeNull();
+
+    // Activate handwriting mode
+    useHandwritingStore.getState().toggleHandwriting('book-1', true);
+    const { container: hwContainer } = renderHeader();
+
+    // Handwriting mode: header-title replaced with embedded handwriting toolbar
+    expect(hwContainer.querySelector('.header-title')).toBeNull();
+    expect(hwContainer.querySelector('.header-handwriting-toolbar')).not.toBeNull();
+
+    // Reset store
+    useHandwritingStore.getState().toggleHandwriting('book-1', false);
+  });
+
+  it('auto-hides header bar when unhovered even with handwriting active', () => {
+    useHandwritingStore.getState().toggleHandwriting('book-1', true);
+    mockHoveredBookKey = '';
+    const { container } = renderHeader();
+    const banner = container.querySelector('[role="banner"]');
+    expect(banner?.classList.contains('opacity-0')).toBe(true);
+    useHandwritingStore.getState().toggleHandwriting('book-1', false);
   });
 });

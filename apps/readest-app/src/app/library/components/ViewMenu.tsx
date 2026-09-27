@@ -300,6 +300,14 @@ const ViewMenu: React.FC<ViewMenuProps> = ({ setIsDropdownOpen }) => {
           )}
         </ul>
       </MenuItem>
+      <hr aria-hidden='true' className='border-base-200 my-1' />
+      <MenuItem
+        label={_('Handwriting Notes')}
+        onClick={() => {
+          setIsDropdownOpen?.(false);
+          eventDispatcher.dispatch('show-handwriting-overview');
+        }}
+      />
     </Menu>
   );
 };

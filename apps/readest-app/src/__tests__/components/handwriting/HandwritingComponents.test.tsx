@@ -1,15 +1,24 @@
-import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, cleanup } from '@testing-library/react';
 import { HandwritingToggler } from '@/app/reader/components/handwriting/HandwritingToggler';
 import { HandwritingToolbar } from '@/app/reader/components/handwriting/HandwritingToolbar';
 import { HandwritingLayer } from '@/app/reader/components/handwriting/HandwritingLayer';
+import { HandwritingOverviewDialog } from '@/app/reader/components/handwriting/HandwritingOverviewDialog';
+import { queryHandwritingPages } from '@/services/handwritingService';
 import { useHandwritingStore } from '@/store/handwritingStore';
 import { HandwritingStroke } from '@/types/handwriting';
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => (s: string, opts?: Record<string, string>) =>
     opts ? s.replace(/\{\{(\w+)\}\}/g, (_m, key) => opts[key] ?? '') : s,
+}));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}));
+
+vi.mock('@/context/EnvContext', () => ({
+  useEnv: () => ({ envConfig: {}, appService: { isMobile: false } }),
 }));
 
 vi.mock('@/hooks/useResponsiveSize', () => ({
@@ -40,6 +49,7 @@ const mockView = {
   removeEventListener: vi.fn(),
   next: vi.fn(),
   prev: vi.fn(),
+  goTo: vi.fn(),
 };
 
 vi.mock('@/store/readerStore', () => {
@@ -106,11 +116,10 @@ describe('Handwriting UI Components', () => {
         />,
       );
 
-      // Verify pointer events and z-index on toolbar root
+      // Verify pointer events and class on toolbar root
       const toolbarRoot = container.firstChild as HTMLElement;
+      expect(toolbarRoot.className).toContain('header-handwriting-toolbar');
       expect(toolbarRoot.className).toContain('pointer-events-auto');
-      expect(toolbarRoot.className).toContain('z-50');
-      expect(toolbarRoot.style.top).toBe('68px');
 
       // Switch to pencil
       const pencilBtn = getByTitle('Pencil (Textured & Light)');
@@ -197,7 +206,10 @@ describe('Handwriting UI Components', () => {
         pageIndex: 4,
         createdAt: 1000,
         updatedAt: 1000,
-        points: [{ x: 0.2, y: 0.2 }, { x: 0.3, y: 0.3 }],
+        points: [
+          { x: 0.2, y: 0.2 },
+          { x: 0.3, y: 0.3 },
+        ],
       });
 
       // Add stroke to page 6 (0-indexed pageIndex = 5)
@@ -210,7 +222,10 @@ describe('Handwriting UI Components', () => {
         pageIndex: 5,
         createdAt: 2000,
         updatedAt: 2000,
-        points: [{ x: 0.5, y: 0.5 }, { x: 0.6, y: 0.6 }],
+        points: [
+          { x: 0.5, y: 0.5 },
+          { x: 0.6, y: 0.6 },
+        ],
       });
 
       // 1. Start at Page 5 (pageIndex = 4)
@@ -381,11 +396,7 @@ describe('Handwriting UI Components', () => {
       useHandwritingStore.getState().setTool('pen');
 
       const { getByTitle, getByText, container } = render(
-        <HandwritingToolbar
-          bookKey={bookKey}
-          containerWidth={1000}
-          containerHeight={1000}
-        />,
+        <HandwritingToolbar bookKey={bookKey} containerWidth={1000} containerHeight={1000} />,
       );
 
       // First click on active pen -> toggles sub-toolbar
@@ -412,6 +423,70 @@ describe('Handwriting UI Components', () => {
       const strokeModeBtn = getByText('Stroke (Full)');
       fireEvent.click(strokeModeBtn);
       expect(useHandwritingStore.getState().eraserType).toBe('stroke');
+    });
+
+    it('collapses color choices into single button and opens color sub-toolbar', () => {
+      const bookKey = 'color-test';
+      useHandwritingStore.getState().toggleHandwriting(bookKey, true);
+      useHandwritingStore.getState().setTool('pen');
+      useHandwritingStore.getState().setColor('#000000');
+
+      const { getByTitle, getByText, container } = render(
+        <HandwritingToolbar bookKey={bookKey} containerWidth={1000} containerHeight={1000} />,
+      );
+
+      // Main toolbar has single color button
+      const colorBtn = getByTitle('Color');
+      expect(colorBtn).toBeDefined();
+
+      // Click color button to open sub-toolbar
+      fireEvent.click(colorBtn);
+      expect(getByText('Stroke Color')).toBeDefined();
+      expect(getByText('Custom Color')).toBeDefined();
+
+      // Select preset color from sub-toolbar
+      const redPreset = getByTitle('#ef4444');
+      fireEvent.click(redPreset);
+      expect(useHandwritingStore.getState().currentColor).toBe('#ef4444');
+
+      // Change custom color
+      const colorInput = container.querySelector('input[type="color"]') as HTMLInputElement;
+      expect(colorInput).not.toBeNull();
+      fireEvent.change(colorInput, { target: { value: '#123456' } });
+      expect(useHandwritingStore.getState().currentColor).toBe('#123456');
+
+      // Toggle color button again closes sub-toolbar
+      fireEvent.click(colorBtn);
+      expect(container.querySelector('input[type="color"]')).toBeNull();
+    });
+
+    it('adapts layout responsively for wide/landscape and compact/portrait screens', () => {
+      const bookKey = 'responsive-test';
+      useHandwritingStore.getState().toggleHandwriting(bookKey, true);
+      useHandwritingStore.getState().setTool('pen');
+      useHandwritingStore.getState().setStylusOnly(true);
+
+      // 1. Wide / Landscape (e.g. 900px): Shows direct Clear & Export buttons, and text on stylus button
+      const wideRender = render(<HandwritingToolbar bookKey={bookKey} headerWidth={900} />);
+      expect(wideRender.getByText('Stylus Only')).toBeDefined();
+      expect(wideRender.getByTitle('Clear Current Page')).toBeDefined();
+      expect(wideRender.getByTitle('Export / Import Handwriting')).toBeDefined();
+      expect(wideRender.queryByTitle('More Options')).toBeNull();
+      wideRender.unmount();
+
+      // 2. Compact / Portrait (e.g. 400px): Stylus button hides text, secondary tools tuck into More menu
+      const compactRender = render(<HandwritingToolbar bookKey={bookKey} headerWidth={400} />);
+      expect(compactRender.queryByText('Stylus Only')).toBeNull();
+      // More options button exists
+      const moreBtn = compactRender.getByTitle('More Options');
+      expect(moreBtn).toBeDefined();
+
+      // Click more button to open compact dropdown
+      fireEvent.click(moreBtn);
+      expect(compactRender.getByText('Clear Current Page')).toBeDefined();
+      expect(compactRender.getByText('Shapes Tool (Line, Rectangle, Circle, Arrow)')).toBeDefined();
+      expect(compactRender.getByText('Lasso Text Selection & Sticky Notes')).toBeDefined();
+      compactRender.unmount();
     });
 
     it('partial eraser splits stroke into segments in HandwritingLayer', () => {
@@ -474,6 +549,182 @@ describe('Handwriting UI Components', () => {
       // Partial eraser should split the stroke into 2 segments instead of dropping it
       const strokesAfter = useHandwritingStore.getState().getPageStrokes(bookHash, 0);
       expect(strokesAfter.length).toBe(2);
+    });
+  });
+
+  describe('HandwritingOverviewDialog & Query Engine', () => {
+    const bookHash = 'book123';
+
+    beforeEach(() => {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.clear();
+      }
+      useHandwritingStore.setState({
+        bookStrokes: {},
+        stickyNotes: {},
+        activeBookKey: null,
+      });
+      const strokeP0: HandwritingStroke = {
+        id: 's0',
+        tool: 'pen',
+        color: '#000000',
+        width: 3,
+        opacity: 1,
+        pageIndex: 0,
+        createdAt: 1000,
+        updatedAt: 1000,
+        points: [{ x: 0.1, y: 0.1 }],
+      };
+      const strokeP1_1: HandwritingStroke = {
+        id: 's1-1',
+        tool: 'highlighter',
+        color: '#eab308',
+        width: 12,
+        opacity: 0.35,
+        pageIndex: 1,
+        createdAt: 2000,
+        updatedAt: 3000,
+        points: [
+          { x: 0.2, y: 0.2 },
+          { x: 0.8, y: 0.2 },
+        ],
+        textAnchor: { cfi: 'epubcfi(/6/4[chap1]!/4/2/1:0)', textSnippet: 'Chapter 1 Title' },
+      };
+      const strokeP1_2: HandwritingStroke = {
+        id: 's1-2',
+        tool: 'pencil',
+        color: '#64748b',
+        width: 2,
+        opacity: 0.78,
+        pageIndex: 1,
+        createdAt: 2500,
+        updatedAt: 3500,
+        points: [{ x: 0.3, y: 0.3 }],
+      };
+
+      useHandwritingStore.getState().addStroke(bookHash, 0, strokeP0);
+      useHandwritingStore.getState().addStroke(bookHash, 1, strokeP1_1);
+      useHandwritingStore.getState().addStroke(bookHash, 1, strokeP1_2);
+    });
+
+    it('queries handwriting pages and supports filtering by tool and content', () => {
+      // All pages for this book
+      const all = queryHandwritingPages({ bookHash });
+      expect(all.length).toBe(2);
+
+      // Filter by tool: highlighter
+      const highlighterOnly = queryHandwritingPages({ bookHash, tool: 'highlighter' });
+      expect(highlighterOnly.length).toBe(1);
+      expect(highlighterOnly[0]?.pageIndex).toBe(1);
+
+      // Filter by text anchor content
+      const anchorsOnly = queryHandwritingPages({ bookHash, filterKind: 'anchors' });
+      expect(anchorsOnly.length).toBe(1);
+      expect(anchorsOnly[0]?.textSnippets).toContain('Chapter 1 Title');
+
+      // Sort by strokes-desc
+      const sortedByStrokes = queryHandwritingPages({ bookHash, sortOrder: 'strokes-desc' });
+      expect(sortedByStrokes[0]?.pageIndex).toBe(1); // Page 1 has 2 strokes
+      expect(sortedByStrokes[1]?.pageIndex).toBe(0); // Page 0 has 1 stroke
+    });
+
+    it('renders HandwritingOverviewDialog and allows jumping to page', () => {
+      const handleClose = vi.fn();
+      const { getByText, getAllByTitle, getAllByText } = render(
+        <HandwritingOverviewDialog
+          bookKey={`${bookHash}-key`}
+          isOpen={true}
+          onClose={handleClose}
+        />,
+      );
+
+      // Title & page count badge
+      expect(getByText('Handwriting Notes')).toBeTruthy();
+      expect(getAllByText('2 pages').length).toBeGreaterThanOrEqual(1);
+
+      // Page indicators
+      expect(getByText('Page 1')).toBeTruthy();
+      expect(getByText('Page 2')).toBeTruthy();
+
+      // Click "Go to Page" on page 2 (pageIndex: 1)
+      const jumpButtons = getAllByTitle('Go to Page');
+      expect(jumpButtons.length).toBe(2);
+      fireEvent.click(jumpButtons[0]!); // Go to page
+
+      // Foliate view goTo called and dialog closed
+      expect(mockView.goTo).toHaveBeenCalled();
+      expect(handleClose).toHaveBeenCalled();
+    });
+
+    it('displays book page content behind strokes and renders snapshot image when available', async () => {
+      const { saveHandwritingSnapshot } = await import('@/services/handwritingSnapshotService');
+
+      // Save a simulated page snapshot for page 0
+      await saveHandwritingSnapshot(bookHash, 0, 'data:image/jpeg;base64,mockJpegSnapshotData');
+
+      const { container } = render(
+        <HandwritingOverviewDialog bookKey={`${bookHash}-key`} isOpen={true} onClose={vi.fn()} />,
+      );
+
+      // Card for Page 1 (with snapshot) should render an img tag with the snapshot dataUrl
+      const img = container.querySelector('img[src="data:image/jpeg;base64,mockJpegSnapshotData"]');
+      expect(img).toBeTruthy();
+
+      // Card for Page 2 (without snapshot) should render simulated book page text
+      expect(container.textContent).toContain('Test Book');
+      expect(container.textContent).toContain('Chapter 1 Title');
+    });
+
+    it('deletes a page note, immediately removes it from overview list and updates store', async () => {
+      const { getByText, getAllByTitle, queryByText } = render(
+        <HandwritingOverviewDialog bookKey={`${bookHash}-key`} isOpen={true} onClose={vi.fn()} />,
+      );
+
+      expect(getByText('Page 1')).toBeTruthy();
+      expect(getByText('Page 2')).toBeTruthy();
+
+      // Click trash button on first card (Page 2, since default sort is updated-desc)
+      const trashButtons = getAllByTitle('Clear Page Notes');
+      expect(trashButtons.length).toBe(2);
+      fireEvent.click(trashButtons[0]!);
+
+      // Confirm button appears with Cancel option
+      const deleteBtn = getByText('Delete');
+      const cancelBtn = getByText('Cancel');
+      expect(deleteBtn).toBeTruthy();
+      expect(cancelBtn).toBeTruthy();
+
+      // Click delete to clear page note
+      fireEvent.click(deleteBtn);
+
+      // Page 2 is immediately removed from the overview!
+      expect(queryByText('Page 2')).toBeNull();
+      expect(getByText('Page 1')).toBeTruthy();
+    });
+
+    it('opens preview modal when clicking a note and allows previous/next note navigation', async () => {
+      const { getByText, getByTitle, queryByTitle } = render(
+        <HandwritingOverviewDialog bookKey={`${bookHash}-key`} isOpen={true} onClose={vi.fn()} />,
+      );
+
+      // Click Page 2 card
+      const page2Card = getByText('Page 2');
+      fireEvent.click(page2Card);
+
+      // Carousel preview modal opens
+      expect(getByText('Open in Reader')).toBeTruthy();
+      const prevBtn = getByTitle('Previous Note (Left Arrow)');
+      const nextBtn = getByTitle('Next Note (Right Arrow)');
+      expect(prevBtn).toBeTruthy();
+      expect(nextBtn).toBeTruthy();
+
+      // Navigate to previous note
+      fireEvent.click(prevBtn);
+
+      // Close preview modal
+      const closeBtn = getByTitle('Close');
+      fireEvent.click(closeBtn);
+      expect(queryByTitle('Close')).toBeNull();
     });
   });
 });

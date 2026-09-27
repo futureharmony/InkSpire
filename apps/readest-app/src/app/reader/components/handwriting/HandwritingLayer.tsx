@@ -5,11 +5,7 @@ import { useThemeStore } from '@/store/themeStore';
 import { useBookProgress } from '@/store/readerProgressStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { Insets } from '@/types/misc';
-import {
-  HandwritingPoint,
-  HandwritingStroke,
-  HandwritingStickyNote,
-} from '@/types/handwriting';
+import { HandwritingPoint, HandwritingStroke, HandwritingStickyNote } from '@/types/handwriting';
 import {
   fromNormalizedPoint,
   renderStrokeToCanvas,
@@ -20,6 +16,7 @@ import {
   strokeToCalligraphicPath,
   toNormalizedPoint,
   extractTextAnchorForStroke,
+  extractVisiblePageText,
   REFERENCE_WIDTH,
 } from '@/utils/handwriting';
 import {
@@ -27,8 +24,8 @@ import {
   persistPageHandwriting,
   persistPageStickyNotes,
 } from '@/services/handwritingService';
+import { captureAndSavePageSnapshot } from '@/services/handwritingSnapshotService';
 import { extractTextFromStroke, ExtractedTextResult } from '@/utils/lassoTextSelector';
-import HandwritingToolbar from './HandwritingToolbar';
 import { StickyNoteCard } from './StickyNoteCard';
 import { LassoActionMenu } from './LassoActionMenu';
 import { uniqueId } from '@/utils/misc';
@@ -38,10 +35,7 @@ interface HandwritingLayerProps {
   contentInsets: Insets;
 }
 
-export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
-  bookKey,
-  contentInsets,
-}) => {
+export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, contentInsets }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const currentStrokePoints = useRef<HandwritingPoint[]>([]);
@@ -80,6 +74,37 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
   const isActive = activeBookKey === bookKey;
   const currentStrokes = getPageStrokes(bookHash, currentPageIndex);
 
+  const captureTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const schedulePageSnapshot = useCallback(
+    (pageIdx: number) => {
+      if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
+      captureTimeoutRef.current = setTimeout(async () => {
+        try {
+          await captureAndSavePageSnapshot(bookHash, pageIdx, containerRef.current);
+        } catch {
+          // ignore
+        }
+      }, 120);
+    },
+    [bookHash],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (captureTimeoutRef.current) clearTimeout(captureTimeoutRef.current);
+    };
+  }, []);
+
+  // When changing to a page with notes, capture snapshot if not already done
+  useEffect(() => {
+    const strokes = getPageStrokes(bookHash, currentPageIndex);
+    const sticky = getStickyNotes(bookHash, currentPageIndex);
+    if (strokes.length > 0 || sticky.length > 0) {
+      schedulePageSnapshot(currentPageIndex);
+    }
+  }, [currentPageIndex, bookHash, getPageStrokes, getStickyNotes, schedulePageSnapshot]);
+
   // Initialize book handwriting data once
   useEffect(() => {
     initBookHandwriting(bookKey, bookHash);
@@ -91,9 +116,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     const pageInfo = isFixedLayout ? progress.section : progress.pageinfo;
     const currentIdx =
       pageInfo?.current ??
-      (typeof progress.page === 'number' && progress.page > 0
-        ? progress.page - 1
-        : 0);
+      (typeof progress.page === 'number' && progress.page > 0 ? progress.page - 1 : 0);
     if (
       typeof currentIdx === 'number' &&
       !Number.isNaN(currentIdx) &&
@@ -190,7 +213,10 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
             currentPageIndex,
             newStrokes,
             progress?.location,
+            undefined,
+            dimensions.height > 0 ? dimensions.width / dimensions.height : undefined,
           );
+          schedulePageSnapshot(currentPageIndex);
         }
       } else {
         // Stroke mode (default): clear entire stroke on touch
@@ -206,7 +232,10 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
               currentPageIndex,
               updated,
               progress?.location,
+              undefined,
+              dimensions.height > 0 ? dimensions.width / dimensions.height : undefined,
             );
+            schedulePageSnapshot(currentPageIndex);
             break;
           }
         }
@@ -222,6 +251,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       getPageStrokes,
       progress?.location,
       removeStroke,
+      schedulePageSnapshot,
       setPageStrokes,
     ],
   );
@@ -278,8 +308,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       return;
     }
 
-    const activeColor =
-      currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
+    const activeColor = currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
 
     const tempStroke: HandwritingStroke = {
       id: 'temp',
@@ -334,7 +363,11 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       ctx.setLineDash([5, 5]);
       ctx.beginPath();
       for (let i = 0; i < currentStrokePoints.current.length; i++) {
-        const p = fromNormalizedPoint(currentStrokePoints.current[i]!, dimensions.width, dimensions.height);
+        const p = fromNormalizedPoint(
+          currentStrokePoints.current[i]!,
+          dimensions.width,
+          dimensions.height,
+        );
         if (i === 0) ctx.moveTo(p.x, p.y);
         else ctx.lineTo(p.x, p.y);
       }
@@ -343,8 +376,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       return;
     }
 
-    const activeColor =
-      currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
+    const activeColor = currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
 
     const tempStroke: HandwritingStroke = {
       id: 'temp',
@@ -431,12 +463,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
 
       if (pts.length > 2) {
-        const extracted = extractTextFromStroke(
-          pts,
-          dimensions.width,
-          dimensions.height,
-          view,
-        );
+        const extracted = extractTextFromStroke(pts, dimensions.width, dimensions.height, view);
         if (extracted && extracted.text.trim().length > 0) {
           setLassoSelection(extracted);
         }
@@ -444,8 +471,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       return;
     }
 
-    const activeColor =
-      currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
+    const activeColor = currentColor === '#000000' && isDarkMode ? '#ffffff' : currentColor;
 
     // Extract underlying text anchor if book has extractable text
     const textAnchor = extractTextAnchorForStroke(
@@ -482,16 +508,21 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       updatedAt: Date.now(),
     };
 
+    const pageText = extractVisiblePageText(view, canvasRef.current?.getBoundingClientRect());
+
     addStroke(bookHash, currentPageIndex, newStroke);
 
-    const updated = [...getPageStrokes(bookHash, currentPageIndex), newStroke];
+    const updated = getPageStrokes(bookHash, currentPageIndex);
     persistPageHandwriting(
       bookKey,
       bookHash,
       currentPageIndex,
       updated,
       progress?.location,
+      pageText,
+      dimensions.height > 0 ? dimensions.width / dimensions.height : undefined,
     );
+    schedulePageSnapshot(currentPageIndex);
 
     currentStrokePoints.current = [];
     const ctx = canvas?.getContext('2d');
@@ -513,10 +544,8 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
       updatedAt: Date.now(),
     };
     addStickyNote(bookHash, currentPageIndex, newNote);
-    persistPageStickyNotes(bookHash, currentPageIndex, [
-      ...getStickyNotes(bookHash, currentPageIndex),
-      newNote,
-    ]);
+    persistPageStickyNotes(bookHash, currentPageIndex, getStickyNotes(bookHash, currentPageIndex));
+    schedulePageSnapshot(currentPageIndex);
     setLassoSelection(null);
   };
 
@@ -541,13 +570,8 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     };
     addStroke(bookHash, currentPageIndex, highlightStroke);
     const updated = [...getPageStrokes(bookHash, currentPageIndex), highlightStroke];
-    persistPageHandwriting(
-      bookKey,
-      bookHash,
-      currentPageIndex,
-      updated,
-      progress?.location,
-    );
+    persistPageHandwriting(bookKey, bookHash, currentPageIndex, updated, progress?.location);
+    schedulePageSnapshot(currentPageIndex);
     setLassoSelection(null);
   };
 
@@ -567,22 +591,14 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     return strokes.map((stroke) => {
       if (stroke.points.length === 0) return null;
       const baseWidth = Math.max(1, stroke.width * strokeScale);
-      const strokeWidth =
-        stroke.tool === 'highlighter' ? baseWidth * 2.5 : baseWidth;
-      const opacity =
-        stroke.tool === 'highlighter' ? 0.35 : stroke.opacity || 1.0;
+      const strokeWidth = stroke.tool === 'highlighter' ? baseWidth * 2.5 : baseWidth;
+      const opacity = stroke.tool === 'highlighter' ? 0.35 : stroke.opacity || 1.0;
       const blendStyle: React.CSSProperties =
-        stroke.tool === 'highlighter'
-          ? { mixBlendMode: isDarkMode ? 'screen' : 'multiply' }
-          : {};
+        stroke.tool === 'highlighter' ? { mixBlendMode: isDarkMode ? 'screen' : 'multiply' } : {};
 
       if (stroke.tool === 'shape') {
         const p1 = fromNormalizedPoint(stroke.points[0]!, width, height);
-        const p2 = fromNormalizedPoint(
-          stroke.points[stroke.points.length - 1]!,
-          width,
-          height,
-        );
+        const p2 = fromNormalizedPoint(stroke.points[stroke.points.length - 1]!, width, height);
 
         if (stroke.shapeType === 'line' || stroke.shapeType === 'arrow') {
           const snapped = snapLine(p1.x, p1.y, p2.x, p2.y);
@@ -737,8 +753,19 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
     <defs>
       <filter id='inkspire-pencil-grain' x='-20%' y='-20%' width='140%' height='140%'>
         <feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' result='noise' />
-        <feDisplacementMap in='SourceGraphic' in2='noise' scale='1.2' xChannelSelector='R' yChannelSelector='G' result='displaced' />
-        <feColorMatrix type='matrix' values='1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.85 0' in='displaced' />
+        <feDisplacementMap
+          in='SourceGraphic'
+          in2='noise'
+          scale='1.2'
+          xChannelSelector='R'
+          yChannelSelector='G'
+          result='displaced'
+        />
+        <feColorMatrix
+          type='matrix'
+          values='1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.85 0'
+          in='displaced'
+        />
       </filter>
     </defs>
   );
@@ -802,14 +829,6 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
-      />
-
-      {/* 5. Floating Handwriting Toolbar */}
-      <HandwritingToolbar
-        bookKey={bookKey}
-        containerWidth={width}
-        containerHeight={height}
-        contentInsets={contentInsets}
       />
     </div>
   );

@@ -86,7 +86,7 @@ const Dialog: React.FC<DialogProps> = ({
 }) => {
   const _ = useTranslation();
   const { appService } = useEnv();
-  const { systemUIVisible, statusBarHeight, safeAreaInsets } = useThemeStore();
+  const { statusBarHeight, safeAreaInsets } = useThemeStore();
   const { acquireBackKeyInterception, releaseBackKeyInterception } = useDeviceControlStore();
   const [isFullHeightInMobile, setIsFullHeightInMobile] = useState(!snapHeight);
   const [isRtl] = useState(() => getDirFromUILanguage() === 'rtl');
@@ -98,7 +98,12 @@ const Dialog: React.FC<DialogProps> = ({
   const pendingSwipeRef = useRef<{ x: number; y: number } | null>(null);
   const previousActiveElementRef = useRef<HTMLElement | null>(null);
   const iconSize22 = useResponsiveSize(22);
-  const isMobile = window.innerWidth < 640 || window.innerHeight < 640;
+  const isMobile =
+    window.innerWidth < 640 || window.innerHeight < 640 || Boolean(appService?.isMobile);
+  const hasSafeArea =
+    Boolean(appService?.hasSafeAreaInset) ||
+    Boolean(appService?.isMobile) ||
+    (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
 
   // Callers gate the body on the same flag they pass as `isOpen`
   // (`<Dialog isOpen={open}>{open && <Body />}</Dialog>`), so the body would
@@ -354,13 +359,11 @@ const Dialog: React.FC<DialogProps> = ({
         )}
         style={{
           paddingTop:
-            appService?.hasSafeAreaInset && (fullScreen || isFullHeightInMobile)
-              ? `${Math.max(safeAreaInsets?.top || 0, systemUIVisible ? statusBarHeight : 0)}px`
+            hasSafeArea && (fullScreen || isFullHeightInMobile)
+              ? `max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px), ${Math.max(safeAreaInsets?.top || 0, statusBarHeight || 0, 24)}px)`
               : '0px',
           paddingBottom:
-            appService?.hasSafeAreaInset && fullScreen
-              ? `${(safeAreaInsets?.bottom || 0) * 0.33}px`
-              : undefined,
+            hasSafeArea && fullScreen ? `${(safeAreaInsets?.bottom || 0) * 0.33}px` : undefined,
           ...(isMobile
             ? snapHeight
               ? { height: `${snapHeight * 100}%`, top: 'auto', bottom: 0 }

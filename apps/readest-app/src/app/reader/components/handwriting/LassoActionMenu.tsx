@@ -1,12 +1,6 @@
 import React from 'react';
 import clsx from 'clsx';
-import {
-  LuStickyNote,
-  LuHighlighter,
-  LuCopy,
-  LuX,
-  LuCheck,
-} from 'react-icons/lu';
+import { LuStickyNote, LuHighlighter, LuCopy, LuX, LuCheck } from 'react-icons/lu';
 import { useTranslation } from '@/hooks/useTranslation';
 import { ExtractedTextResult } from '@/utils/lassoTextSelector';
 
@@ -31,7 +25,10 @@ export const LassoActionMenu: React.FC<LassoActionMenuProps> = ({
   const [copied, setCopied] = React.useState(false);
 
   const rect = selection.boundingRect;
-  const menuX = Math.max(10, Math.min(containerWidth - 220, (rect.left + rect.right) * containerWidth * 0.5 - 100));
+  const menuX = Math.max(
+    10,
+    Math.min(containerWidth - 220, (rect.left + rect.right) * containerWidth * 0.5 - 100),
+  );
   const menuY = Math.max(10, rect.top * containerHeight - 50);
 
   const handleCopy = async () => {
