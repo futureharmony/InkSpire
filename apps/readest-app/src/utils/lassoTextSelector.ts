@@ -10,6 +10,13 @@ export interface ExtractedTextResult {
     right: number;
     bottom: number;
   };
+  /** Normalized bounding rectangles for each matched word or character segment */
+  textRects?: Array<{
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  }>;
 }
 
 /**
@@ -68,6 +75,12 @@ export function extractTextFromStroke(
   try {
     const contents = view?.renderer?.getContents?.() ?? [];
     let extractedText = '';
+    const allMatchedRects: Array<{
+      left: number;
+      top: number;
+      right: number;
+      bottom: number;
+    }> = [];
 
     for (const content of contents) {
       const doc = content.doc;
@@ -142,6 +155,12 @@ export function extractTextFromStroke(
               const trimmed = textContent.trim();
               if (trimmed && !fallbackTexts.includes(trimmed)) {
                 fallbackTexts.push(trimmed);
+                allMatchedRects.push({
+                  left: Math.max(0, wr.left / containerWidth),
+                  top: Math.max(0, wr.top / containerHeight),
+                  right: Math.min(1, wr.right / containerWidth),
+                  bottom: Math.min(1, wr.bottom / containerHeight),
+                });
               }
             }
           }
@@ -214,12 +233,28 @@ export function extractTextFromStroke(
               const midX = (wr.left + wr.right) / 2;
               const midY = (wr.top + wr.bottom) / 2;
 
+              // Check if center or horizontal midpoints fall inside the lasso
               const insidePoly =
-                polygonPoints.length >= 3 && isPointInPolygon(midX, midY, polygonPoints);
+                polygonPoints.length >= 3 &&
+                (isPointInPolygon(midX, midY, polygonPoints) ||
+                  isPointInPolygon(wr.left + 2, midY, polygonPoints) ||
+                  isPointInPolygon(wr.right - 2, midY, polygonPoints));
               const insideBbox = midX >= minX && midX <= maxX && midY >= minY && midY <= maxY;
 
               if (insidePoly || (polygonPoints.length < 3 && insideBbox)) {
-                nodeMatchedText += seg.text;
+                // If English/Latin word, preserve trailing space if present in original text
+                const needsSpace =
+                  nodeMatchedText.length > 0 &&
+                  !nodeMatchedText.endsWith(' ') &&
+                  /[\w]/.test(seg.text[0] || '') &&
+                  /[\w]/.test(nodeMatchedText[nodeMatchedText.length - 1] || '');
+                nodeMatchedText += (needsSpace ? ' ' : '') + seg.text;
+                allMatchedRects.push({
+                  left: Math.max(0, wr.left / containerWidth),
+                  top: Math.max(0, wr.top / containerHeight),
+                  right: Math.min(1, wr.right / containerWidth),
+                  bottom: Math.min(1, wr.bottom / containerHeight),
+                });
                 break;
               }
             }
@@ -238,16 +273,26 @@ export function extractTextFromStroke(
       }
 
       if (collectedPieces.length > 0) {
-        extractedText = collectedPieces
-          .map((p) => p.text)
-          .join(' ')
-          .replace(/\s+/g, ' ')
-          .trim();
+        // Naturally join pieces: if Chinese/CJK, join without spaces, else with spaces
+        let joined = '';
+        for (const p of collectedPieces) {
+          if (!joined) {
+            joined = p.text;
+          } else {
+            const lastChar = joined[joined.length - 1] || '';
+            const firstChar = p.text[0] || '';
+            const isCjk =
+              /[\u4e00-\u9fa5\u3040-\u30ff]/.test(lastChar) &&
+              /[\u4e00-\u9fa5\u3040-\u30ff]/.test(firstChar);
+            joined += (isCjk ? '' : ' ') + p.text;
+          }
+        }
+        extractedText = joined.replace(/\s+/g, ' ').trim();
         break;
       }
 
       if (fallbackTexts.length > 0) {
-        extractedText = fallbackTexts.join(' ').replace(/\s+/g, ' ').trim();
+        extractedText = fallbackTexts.join('').replace(/\s+/g, ' ').trim();
         break;
       }
     }
@@ -258,14 +303,28 @@ export function extractTextFromStroke(
     }
 
     if (extractedText) {
+      // Calculate tighter bounding rect from matched text if available
+      let tLeft = minX / containerWidth;
+      let tTop = minY / containerHeight;
+      let tRight = maxX / containerWidth;
+      let tBottom = maxY / containerHeight;
+
+      if (allMatchedRects.length > 0) {
+        tLeft = Math.min(...allMatchedRects.map((r) => r.left));
+        tTop = Math.min(...allMatchedRects.map((r) => r.top));
+        tRight = Math.max(...allMatchedRects.map((r) => r.right));
+        tBottom = Math.max(...allMatchedRects.map((r) => r.bottom));
+      }
+
       return {
-        text: extractedText.slice(0, 300),
+        text: extractedText,
         boundingRect: {
-          left: minX / containerWidth,
-          top: minY / containerHeight,
-          right: maxX / containerWidth,
-          bottom: maxY / containerHeight,
+          left: tLeft,
+          top: tTop,
+          right: tRight,
+          bottom: tBottom,
         },
+        textRects: allMatchedRects,
       };
     }
   } catch (err) {

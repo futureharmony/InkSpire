@@ -6,8 +6,6 @@ import { useHandwritingStore } from '@/store/handwritingStore';
 import { useThemeStore } from '@/store/themeStore';
 import { useBookProgress } from '@/store/readerProgressStore';
 import { useBookDataStore } from '@/store/bookDataStore';
-import { useSidebarStore } from '@/store/sidebarStore';
-import { eventDispatcher } from '@/utils/event';
 import { Insets } from '@/types/misc';
 import {
   HandwritingPoint,
@@ -96,6 +94,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
   const [lassoSelection, setLassoSelection] = useState<ExtractedTextResult | null>(null);
   const [glowSelection, setGlowSelection] = useState<{
     rect: { left: number; top: number; right: number; bottom: number };
+    textRects?: Array<{ left: number; top: number; right: number; bottom: number }>;
     timestamp: number;
   } | null>(null);
   const glowTimer = useRef<NodeJS.Timeout | null>(null);
@@ -706,17 +705,18 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
           // ignore
         }
 
-        // Micro-interaction 2: Breathing glow highlight over selected text
+        // Micro-interaction 2: Breathing highlight over selected text characters
         setGlowSelection({
           rect: extracted.boundingRect,
+          textRects: extracted.textRects,
           timestamp: Date.now(),
         });
         if (glowTimer.current) clearTimeout(glowTimer.current);
         glowTimer.current = setTimeout(() => {
           setGlowSelection(null);
-        }, 2500);
+        }, 3000);
 
-        // Micro-interaction 3: Summon refined action menu (Note / Highlight / AI / Copy)
+        // Micro-interaction 3: Summon refined action menu (Note / Copy)
         setLassoSelection(extracted);
 
         // Dissolve ink stroke smoothly into the glow
@@ -781,6 +781,11 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
       if (pts.length > 2) {
         const extracted = extractTextFromStroke(pts, dimensions.width, dimensions.height, view);
         if (extracted && extracted.text.trim().length > 0) {
+          setGlowSelection({
+            rect: extracted.boundingRect,
+            textRects: extracted.textRects,
+            timestamp: Date.now(),
+          });
           setLassoSelection(extracted);
         }
       }
@@ -897,54 +902,6 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
     setLassoSelection(null);
     setGlowSelection(null);
   };
-
-  const handleHighlightText = (_text: string) => {
-    if (!lassoSelection) return;
-    const b = lassoSelection.boundingRect;
-    const midY = (b.top + b.bottom) / 2;
-    const highlightStroke: HandwritingStroke = {
-      id: uniqueId(),
-      tool: 'highlighter',
-      color: currentColor === '#000000' ? '#eab308' : currentColor,
-      width: Math.max(12, currentWidth * 2.2),
-      opacity: isDarkMode ? 0.45 : 0.35,
-      points: [
-        { x: b.left, y: midY, pressure: 0.8 },
-        { x: b.right, y: midY, pressure: 0.8 },
-      ],
-      pageIndex: currentPageIndex,
-      cfi: progress?.location,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-    addStroke(bookHash, currentPageIndex, highlightStroke);
-    const updated = [...getPageStrokes(bookHash, currentPageIndex), highlightStroke];
-    persistPageHandwriting(bookKey, bookHash, currentPageIndex, updated, progress?.location);
-    schedulePageSnapshot(currentPageIndex);
-    setLassoSelection(null);
-    setGlowSelection(null);
-  };
-
-  const handleAskAI = useCallback(
-    (text: string) => {
-      setLassoSelection(null);
-      setGlowSelection(null);
-      useSidebarStore.getState().setSideBarVisible(true);
-      const config = useBookDataStore.getState().getConfig(bookKey);
-      if (config?.viewSettings) {
-        useBookDataStore.getState().setConfig(bookKey, {
-          viewSettings: { ...config.viewSettings, sideBarTab: 'ai' },
-        });
-      }
-      const preview = text.length > 20 ? `${text.slice(0, 20)}...` : text;
-      eventDispatcher.dispatch('toast', {
-        type: 'info',
-        timeout: 2500,
-        message: `${_('AI')}: "${preview}"`,
-      });
-    },
-    [bookKey, _],
-  );
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     finishDrawing(e);
@@ -1187,21 +1144,45 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
         />
       ))}
 
-      {/* 3. Breathing Glow Animation Overlay on Circle-to-Clip Selection */}
+      {/* 3. Vivid Character/Word Text Background Highlighting for Circle-to-Clip Selection */}
       {glowSelection && (
-        <div
-          className='absolute pointer-events-none z-30 transition-opacity duration-700 animate-pulse'
-          style={{
-            left: `${glowSelection.rect.left * width}px`,
-            top: `${glowSelection.rect.top * height}px`,
-            width: `${Math.max(20, (glowSelection.rect.right - glowSelection.rect.left) * width)}px`,
-            height: `${Math.max(16, (glowSelection.rect.bottom - glowSelection.rect.top) * height)}px`,
-            background:
-              'radial-gradient(ellipse at center, rgba(59, 130, 246, 0.28) 0%, rgba(59, 130, 246, 0.08) 70%, transparent 100%)',
-            borderRadius: '8px',
-            boxShadow: '0 0 16px 4px rgba(59, 130, 246, 0.35)',
-          }}
-        />
+        <div className='absolute inset-0 pointer-events-none z-30 transition-opacity duration-500'>
+          {/* If per-segment textRects are available, render individual text background spans with rounded corners */}
+          {glowSelection.textRects && glowSelection.textRects.length > 0 ? (
+            glowSelection.textRects.map((r, i) => (
+              <div
+                key={i}
+                className='absolute rounded-xs animate-in fade-in zoom-in-95 duration-200'
+                style={{
+                  left: `${r.left * width - 1}px`,
+                  top: `${r.top * height - 1}px`,
+                  width: `${Math.max(12, (r.right - r.left) * width + 2)}px`,
+                  height: `${Math.max(14, (r.bottom - r.top) * height + 2)}px`,
+                  backgroundColor: isDarkMode ? 'rgba(96, 165, 250, 0.38)' : 'rgba(59, 130, 246, 0.28)',
+                  boxShadow: isDarkMode
+                    ? '0 0 0 1.5px rgba(147, 197, 253, 0.5)'
+                    : '0 0 0 1.5px rgba(59, 130, 246, 0.45)',
+                  mixBlendMode: isDarkMode ? 'screen' : 'multiply',
+                }}
+              />
+            ))
+          ) : (
+            /* Fallback to bounding rect highlight with crisp edges */
+            <div
+              className='absolute rounded-md animate-in fade-in duration-200'
+              style={{
+                left: `${glowSelection.rect.left * width}px`,
+                top: `${glowSelection.rect.top * height}px`,
+                width: `${Math.max(20, (glowSelection.rect.right - glowSelection.rect.left) * width)}px`,
+                height: `${Math.max(16, (glowSelection.rect.bottom - glowSelection.rect.top) * height)}px`,
+                backgroundColor: isDarkMode ? 'rgba(96, 165, 250, 0.32)' : 'rgba(59, 130, 246, 0.22)',
+                boxShadow: isDarkMode
+                  ? '0 0 0 1.5px rgba(147, 197, 253, 0.4)'
+                  : '0 0 0 1.5px rgba(59, 130, 246, 0.35)',
+              }}
+            />
+          )}
+        </div>
       )}
 
       {/* 4. Lasso Action Menu for Selected Text */}
@@ -1211,8 +1192,6 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
           containerWidth={width}
           containerHeight={height}
           onCreateStickyNote={handleCreateStickyNote}
-          onHighlightText={handleHighlightText}
-          onAskAI={handleAskAI}
           onClose={() => {
             setLassoSelection(null);
             setGlowSelection(null);

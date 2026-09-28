@@ -225,10 +225,25 @@ export function detectClosedLoopGesture(
     return emptyResult;
   }
 
-  // End point must be close to start point
-  const endDist = Math.hypot(endX - startX, endY - startY);
-  const closureThreshold = Math.max(35, perimeter * 0.28);
-  if (endDist > closureThreshold) {
+  // End point must be close to start point (or to any of the first few points in case of tail overshoot)
+  let minStartDist = Math.hypot(endX - startX, endY - startY);
+  const headCount = Math.min(6, Math.floor(n * 0.25));
+  for (let i = 0; i < headCount; i++) {
+    const hx = points[i]!.x * width;
+    const hy = points[i]!.y * height;
+    const d = Math.hypot(endX - hx, endY - hy);
+    if (d < minStartDist) minStartDist = d;
+  }
+  const tailCount = Math.min(6, Math.floor(n * 0.25));
+  for (let i = n - tailCount; i < n; i++) {
+    const tx = points[i]!.x * width;
+    const ty = points[i]!.y * height;
+    const d = Math.hypot(tx - startX, ty - startY);
+    if (d < minStartDist) minStartDist = d;
+  }
+
+  const closureThreshold = Math.max(48, perimeter * 0.35);
+  if (minStartDist > closureThreshold) {
     return emptyResult;
   }
 
@@ -245,7 +260,7 @@ export function detectClosedLoopGesture(
   const area = Math.abs(shoelaceSum) / 2;
 
   // Circle must enclose non-trivial area
-  if (area < 1000) {
+  if (area < 600) {
     return emptyResult;
   }
 
@@ -261,8 +276,8 @@ export function detectClosedLoopGesture(
     totalAngle += Math.atan2(cross, dot);
   }
 
-  // A simple closed loop should turn approximately ~2π (360°)
-  if (Math.abs(totalAngle) < 1.1 * Math.PI) {
+  // A hand-drawn loop should turn approximately ~2π (allow ≥ 0.95π to tolerate elliptical arcs)
+  if (Math.abs(totalAngle) < 0.95 * Math.PI) {
     return emptyResult;
   }
 

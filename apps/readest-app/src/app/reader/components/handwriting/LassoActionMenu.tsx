@@ -1,6 +1,6 @@
 import React from 'react';
 import clsx from 'clsx';
-import { LuStickyNote, LuHighlighter, LuCopy, LuX, LuCheck, LuSparkles } from 'react-icons/lu';
+import { LuStickyNote, LuCopy, LuX, LuCheck } from 'react-icons/lu';
 import { useTranslation } from '@/hooks/useTranslation';
 import { ExtractedTextResult } from '@/utils/lassoTextSelector';
 
@@ -9,8 +9,6 @@ interface LassoActionMenuProps {
   containerWidth: number;
   containerHeight: number;
   onCreateStickyNote: (text: string, x: number, y: number) => void;
-  onHighlightText: (text: string) => void;
-  onAskAI?: (text: string) => void;
   onClose: () => void;
 }
 
@@ -19,8 +17,6 @@ export const LassoActionMenu: React.FC<LassoActionMenuProps> = ({
   containerWidth,
   containerHeight,
   onCreateStickyNote,
-  onHighlightText,
-  onAskAI,
   onClose,
 }) => {
   const _ = useTranslation();
@@ -60,7 +56,7 @@ export const LassoActionMenu: React.FC<LassoActionMenuProps> = ({
       <button
         type='button'
         onClick={() => onCreateStickyNote(selection.text, rect.right, rect.top)}
-        className='flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium hover:bg-amber-500/15 hover:text-amber-600 dark:hover:text-amber-400 transition-colors'
+        className='flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 transition-colors'
         title={_('Add sticky note for selected text')}
       >
         <LuStickyNote className='w-3.5 h-3.5 text-amber-500' />
@@ -69,30 +65,8 @@ export const LassoActionMenu: React.FC<LassoActionMenuProps> = ({
 
       <button
         type='button'
-        onClick={() => onHighlightText(selection.text)}
-        className='flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium hover:bg-blue-500/15 hover:text-blue-600 dark:hover:text-blue-400 transition-colors'
-        title={_('Highlight selected text')}
-      >
-        <LuHighlighter className='w-3.5 h-3.5 text-blue-500' />
-        <span>{_('Highlight')}</span>
-      </button>
-
-      {onAskAI && (
-        <button
-          type='button'
-          onClick={() => onAskAI(selection.text)}
-          className='flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium hover:bg-indigo-500/15 hover:text-indigo-600 dark:hover:text-indigo-400 text-indigo-500 transition-colors'
-          title={_('Ask AI to explain or summarize')}
-        >
-          <LuSparkles className='w-3.5 h-3.5 text-indigo-500 animate-pulse' />
-          <span>{_('AI Explaining')}</span>
-        </button>
-      )}
-
-      <button
-        type='button'
         onClick={handleCopy}
-        className='flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium hover:bg-base-200 transition-colors'
+        className='flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium hover:bg-base-200 transition-colors'
         title={_('Copy text')}
       >
         {copied ? (
