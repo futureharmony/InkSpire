@@ -304,6 +304,7 @@ export function renderStrokeToCanvas(
   stroke: HandwritingStroke,
   width: number,
   height: number,
+  isDarkMode = false,
 ): void {
   if (stroke.points.length === 0) return;
 
@@ -318,9 +319,9 @@ export function renderStrokeToCanvas(
   if (stroke.tool === 'highlighter') {
     ctx.strokeStyle = stroke.color;
     ctx.fillStyle = stroke.color;
-    ctx.globalAlpha = stroke.opacity || 0.35;
-    ctx.globalCompositeOperation = 'multiply';
-    ctx.lineWidth = baseWidth * 2.5;
+    ctx.globalAlpha = stroke.opacity || (isDarkMode ? 0.45 : 0.35);
+    ctx.globalCompositeOperation = isDarkMode ? 'screen' : 'multiply';
+    ctx.lineWidth = baseWidth * 2.8;
   } else if (stroke.tool === 'pencil') {
     ctx.strokeStyle = stroke.color;
     ctx.fillStyle = stroke.color;
@@ -468,29 +469,34 @@ export function renderStrokeToCanvas(
     ctx.lineTo(last.x * width, last.y * height);
     ctx.stroke();
 
-    // Subtle graphite paper texture grain & shading
+    // Subtle graphite paper texture grain & shading (Pencil Grain & Shading)
     ctx.fillStyle = stroke.color;
     for (let i = 0; i < points.length; i++) {
       const pt = points[i]!;
       const px = pt.x * width;
       const py = pt.y * height;
       const pr = pt.pressure ?? 0.5;
-      ctx.globalAlpha = Math.min(0.45, 0.15 + 0.3 * pr);
-      const noiseX = Math.sin(px * 12.9898 + py * 78.233) * pencilWidth * 0.6;
-      const noiseY = Math.cos(px * 93.9898 + py * 67.345) * pencilWidth * 0.6;
-      ctx.fillRect(px + noiseX, py + noiseY, 0.85, 0.85);
-      if (pr > 0.6) {
-        const noise2X = Math.sin(px * 37.1 + py * 51.7) * pencilWidth * 0.4;
-        const noise2Y = Math.cos(px * 83.3 + py * 29.1) * pencilWidth * 0.4;
-        ctx.fillRect(px + noise2X, py + noise2Y, 0.8, 0.8);
+
+      // Base graphite tooth grain
+      ctx.globalAlpha = Math.min(0.48, 0.12 + 0.36 * pr);
+      const noiseX = Math.sin(px * 12.9898 + py * 78.233) * pencilWidth * 0.7;
+      const noiseY = Math.cos(px * 93.9898 + py * 67.345) * pencilWidth * 0.7;
+      ctx.fillRect(px + noiseX, py + noiseY, Math.max(0.65, 0.85 * pr), Math.max(0.65, 0.85 * pr));
+
+      // Heavy pressure shading on paper fiber peaks
+      if (pr > 0.55) {
+        const noise2X = Math.sin(px * 37.1 + py * 51.7) * pencilWidth * 0.45;
+        const noise2Y = Math.cos(px * 83.3 + py * 29.1) * pencilWidth * 0.45;
+        ctx.globalAlpha = Math.min(0.38, 0.08 + 0.26 * pr);
+        ctx.fillRect(px + noise2X, py + noise2Y, 0.75, 0.75);
       }
     }
   } else {
     // Highlighter / Watercolor
     ctx.strokeStyle = stroke.color;
     ctx.fillStyle = stroke.color;
-    ctx.globalAlpha = stroke.opacity || 0.35;
-    ctx.globalCompositeOperation = 'multiply';
+    ctx.globalAlpha = stroke.opacity || (isDarkMode ? 0.45 : 0.35);
+    ctx.globalCompositeOperation = isDarkMode ? 'screen' : 'multiply';
     ctx.lineWidth = baseWidth * 2.8;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';

@@ -42,6 +42,77 @@ export interface HandwritingToolbarProps {
   onSubMenuOpenChange?: (isOpen: boolean) => void;
 }
 
+/**
+ * Dynamic pen tip icons that preview active color and width on the toolbar button itself.
+ */
+const DynamicPenIcon: React.FC<{ color: string; width: number; active: boolean }> = ({
+  color,
+  width,
+  active,
+}) => {
+  // Map width (1-10) to dot indicator radius/stroke thickness
+  const dotSize = Math.max(3, Math.min(width * 0.9, 7.5));
+  return (
+    <div className='relative w-[18px] h-[18px] flex items-center justify-center'>
+      <LuPenTool size={15} />
+      {/* Dynamic ink indicator dot at the nib corner */}
+      <span
+        className='absolute -bottom-0.5 -right-0.5 rounded-full border shadow-xs transition-transform'
+        style={{
+          width: `${dotSize}px`,
+          height: `${dotSize}px`,
+          backgroundColor: color,
+          borderColor: active ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.15)',
+        }}
+      />
+    </div>
+  );
+};
+
+const DynamicPencilIcon: React.FC<{ color: string; width: number; active: boolean }> = ({
+  color,
+  width,
+  active,
+}) => {
+  const dotSize = Math.max(2.5, Math.min(width * 0.8, 6.5));
+  return (
+    <div className='relative w-[18px] h-[18px] flex items-center justify-center'>
+      <LuPencil size={15} />
+      <span
+        className='absolute -bottom-0.5 -right-0.5 rounded-full border shadow-xs transition-transform'
+        style={{
+          width: `${dotSize}px`,
+          height: `${dotSize}px`,
+          backgroundColor: color,
+          borderColor: active ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.15)',
+        }}
+      />
+    </div>
+  );
+};
+
+const DynamicHighlighterIcon: React.FC<{
+  color: string;
+  width: number;
+  active: boolean;
+  isDarkMode: boolean;
+}> = ({ color, active }) => {
+  return (
+    <div className='relative w-[18px] h-[18px] flex items-center justify-center'>
+      <LuHighlighter size={15} />
+      {/* Highlighter chisel tip color bar */}
+      <span
+        className='absolute -bottom-0.5 -right-0.5 w-3 h-1.5 rounded-xs border shadow-xs transition-transform'
+        style={{
+          backgroundColor: color,
+          opacity: 0.85,
+          borderColor: active ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.2)',
+        }}
+      />
+    </div>
+  );
+};
+
 const COLOR_PRESETS = [
   '#000000',
   '#64748b', // Slate Gray
@@ -349,7 +420,11 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
             )}
             onClick={() => handleToolClick('pen')}
           >
-            <LuPenTool size={15} />
+            <DynamicPenIcon
+              color={currentColor}
+              width={currentWidth}
+              active={currentTool === 'pen'}
+            />
             {currentTool === 'pen' && (
               <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
             )}
@@ -367,7 +442,11 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
             )}
             onClick={() => handleToolClick('pencil')}
           >
-            <LuPencil size={15} />
+            <DynamicPencilIcon
+              color={currentColor}
+              width={currentWidth}
+              active={currentTool === 'pencil'}
+            />
             {currentTool === 'pencil' && (
               <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
             )}
@@ -385,7 +464,12 @@ export const HandwritingToolbar: React.FC<HandwritingToolbarProps> = ({
             )}
             onClick={() => handleToolClick('highlighter')}
           >
-            <LuHighlighter size={15} />
+            <DynamicHighlighterIcon
+              color={currentColor}
+              width={currentWidth}
+              active={currentTool === 'highlighter'}
+              isDarkMode={isDarkMode}
+            />
             {currentTool === 'highlighter' && (
               <span className='absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-primary-content' />
             )}

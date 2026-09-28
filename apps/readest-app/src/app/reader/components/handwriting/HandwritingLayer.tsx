@@ -1,9 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { LuUndo2, LuRedo2 } from 'react-icons/lu';
+import { useTranslation } from '@/hooks/useTranslation';
 import { useReaderStore } from '@/store/readerStore';
 import { useHandwritingStore } from '@/store/handwritingStore';
 import { useThemeStore } from '@/store/themeStore';
 import { useBookProgress } from '@/store/readerProgressStore';
 import { useBookDataStore } from '@/store/bookDataStore';
+import { useSidebarStore } from '@/store/sidebarStore';
+import { eventDispatcher } from '@/utils/event';
 import { Insets } from '@/types/misc';
 import {
   HandwritingPoint,
@@ -90,10 +94,22 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
   const touchStartPos = useRef<{ x: number; y: number; time: number } | null>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 1200 });
   const [lassoSelection, setLassoSelection] = useState<ExtractedTextResult | null>(null);
+  const [glowSelection, setGlowSelection] = useState<{
+    rect: { left: number; top: number; right: number; bottom: number };
+    timestamp: number;
+  } | null>(null);
+  const glowTimer = useRef<NodeJS.Timeout | null>(null);
+  const [gestureToast, setGestureToast] = useState<'undo' | 'redo' | null>(null);
+  const gestureToastTimer = useRef<NodeJS.Timeout | null>(null);
+  const activeTouchesRef = useRef<
+    Map<number, { startX: number; startY: number; currX: number; currY: number; time: number }>
+  >(new Map());
+  const maxTouchCountRef = useRef<number>(0);
   const [anchorOffsets, setAnchorOffsets] = useState<Record<string, { dx: number; dy: number }>>(
     {},
   );
 
+  const _ = useTranslation();
   const bookHash = bookKey.split('-')[0]!;
   const view = useReaderStore((s) => s.getView(bookKey));
   const { isDarkMode } = useThemeStore();
@@ -119,7 +135,17 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
     getPageStrokes,
     addStickyNote,
     getStickyNotes,
+    undo,
+    redo,
   } = useHandwritingStore();
+
+  const triggerGestureToast = useCallback((type: 'undo' | 'redo') => {
+    setGestureToast(type);
+    if (gestureToastTimer.current) clearTimeout(gestureToastTimer.current);
+    gestureToastTimer.current = setTimeout(() => {
+      setGestureToast(null);
+    }, 1200);
+  }, []);
 
   const isActive = activeBookKey === bookKey;
   const currentStrokes = getPageStrokes(bookHash, currentPageIndex);
@@ -405,7 +431,7 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    renderStrokeToCanvas(ctx, tempStroke, dimensions.width, dimensions.height);
+    renderStrokeToCanvas(ctx, tempStroke, dimensions.width, dimensions.height, isDarkMode);
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -473,7 +499,137 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    renderStrokeToCanvas(ctx, tempStroke, dimensions.width, dimensions.height);
+    renderStrokeToCanvas(ctx, tempStroke, dimensions.width, dimensions.height, isDarkMode);
+  };
+
+  // Multi-finger gesture recognition: Two-finger tap = Undo, Three-finger tap = Redo
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isActive) return;
+    const now = Date.now();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i]!;
+      activeTouchesRef.current.set(t.identifier, {
+        startX: t.clientX,
+        startY: t.clientY,
+        currX: t.clientX,
+        currY: t.clientY,
+        time: now,
+      });
+    }
+
+    const currentCount = e.touches.length;
+    maxTouchCountRef.current = Math.max(maxTouchCountRef.current, currentCount);
+
+    // If 2 or more fingers touch, immediately abort any ink drawing from previous single touch!
+    if (currentCount >= 2) {
+      if (isDrawing.current) {
+        isDrawing.current = false;
+        currentStrokePoints.current = [];
+        const ctx = canvasRef.current?.getContext('2d');
+        ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
+      }
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i]!;
+      const record = activeTouchesRef.current.get(t.identifier);
+      if (record) {
+        record.currX = t.clientX;
+        record.currY = t.clientY;
+      }
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isActive) return;
+    const endedTouches: Array<{
+      startX: number;
+      startY: number;
+      currX: number;
+      currY: number;
+      time: number;
+    }> = [];
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i]!;
+      const record = activeTouchesRef.current.get(t.identifier);
+      if (record) {
+        endedTouches.push(record);
+        activeTouchesRef.current.delete(t.identifier);
+      }
+    }
+
+    if (e.touches.length === 0) {
+      const touchCount = maxTouchCountRef.current;
+      maxTouchCountRef.current = 0;
+
+      if (touchCount === 2 || touchCount === 3) {
+        let isTap = true;
+        const now = Date.now();
+        for (const rec of endedTouches) {
+          const duration = now - rec.time;
+          const dist = Math.hypot(rec.currX - rec.startX, rec.currY - rec.startY);
+          if (duration > 380 || dist > 35) {
+            isTap = false;
+            break;
+          }
+        }
+
+        if (isTap) {
+          if (touchCount === 2) {
+            undo(bookHash, currentPageIndex);
+            const updated = getPageStrokes(bookHash, currentPageIndex);
+            persistPageHandwriting(
+              bookKey,
+              bookHash,
+              currentPageIndex,
+              updated,
+              progress?.location,
+              undefined,
+              dimensions.height > 0 ? dimensions.width / dimensions.height : undefined,
+            );
+            schedulePageSnapshot(currentPageIndex);
+            triggerGestureToast('undo');
+            try {
+              navigator.vibrate?.(18);
+            } catch {
+              // ignore
+            }
+            return;
+          } else if (touchCount === 3) {
+            redo(bookHash, currentPageIndex);
+            const updated = getPageStrokes(bookHash, currentPageIndex);
+            persistPageHandwriting(
+              bookKey,
+              bookHash,
+              currentPageIndex,
+              updated,
+              progress?.location,
+              undefined,
+              dimensions.height > 0 ? dimensions.width / dimensions.height : undefined,
+            );
+            schedulePageSnapshot(currentPageIndex);
+            triggerGestureToast('redo');
+            try {
+              navigator.vibrate?.([15, 20]);
+            } catch {
+              // ignore
+            }
+            return;
+          }
+        }
+      }
+    }
+  };
+
+  const handleTouchCancel = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      activeTouchesRef.current.delete(e.changedTouches[i]!.identifier);
+    }
+    if (e.touches.length === 0) {
+      maxTouchCountRef.current = 0;
+    }
   };
 
   const finishDrawing = (e?: React.PointerEvent<HTMLCanvasElement>) => {
@@ -538,50 +694,32 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
     const points = currentStrokePoints.current;
     if (points.length === 0) return;
 
-    // 1. Gesture Recognition: Circle to Clip / Margin Sticky Note Card
+    // 1. Gesture Recognition: Circle to Clip with Glow Animation & Action Menu
     const loop = detectClosedLoopGesture(points, dimensions.width, dimensions.height);
     if (loop.isClosedLoop) {
       const extracted = extractTextFromStroke(points, dimensions.width, dimensions.height, view);
       if (extracted && extracted.text.trim().length > 0) {
-        // Keep note in the margin of the same page/column as the circle
-        let noteX: number;
-        if (loop.center.x > 0.5) {
-          // Right page/column: keep on the right half
-          if (loop.bbox.maxX < 0.76) {
-            noteX = Math.min(0.76, loop.bbox.maxX + 0.02);
-          } else {
-            noteX = Math.max(0.52, loop.bbox.minX - 0.22);
-          }
-        } else {
-          // Left page/column: keep on the left half
-          if (loop.bbox.minX > 0.24) {
-            noteX = Math.max(0.04, loop.bbox.minX - 0.22);
-          } else {
-            noteX = Math.min(0.26, loop.bbox.maxX + 0.02);
-          }
+        // Micro-interaction 1: Tactile vibration feedback
+        try {
+          navigator.vibrate?.([20, 35]);
+        } catch {
+          // ignore
         }
-        const noteY = Math.max(0.04, Math.min(0.78, loop.center.y - 0.06));
-        const newNote: HandwritingStickyNote = {
-          id: uniqueId(),
-          bookHash,
-          pageIndex: currentPageIndex,
-          x: noteX,
-          y: noteY,
-          color: 'yellow',
-          content: '',
-          selectedText: extracted.text,
-          isPinned: false,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        addStickyNote(bookHash, currentPageIndex, newNote);
-        persistPageStickyNotes(
-          bookHash,
-          currentPageIndex,
-          [...getStickyNotes(bookHash, currentPageIndex), newNote],
-        );
-        schedulePageSnapshot(currentPageIndex);
 
+        // Micro-interaction 2: Breathing glow highlight over selected text
+        setGlowSelection({
+          rect: extracted.boundingRect,
+          timestamp: Date.now(),
+        });
+        if (glowTimer.current) clearTimeout(glowTimer.current);
+        glowTimer.current = setTimeout(() => {
+          setGlowSelection(null);
+        }, 2500);
+
+        // Micro-interaction 3: Summon refined action menu (Note / Highlight / AI / Copy)
+        setLassoSelection(extracted);
+
+        // Dissolve ink stroke smoothly into the glow
         currentStrokePoints.current = [];
         const ctx = canvas?.getContext('2d');
         ctx?.clearRect(0, 0, dimensions.width, dimensions.height);
@@ -728,12 +866,21 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
   };
 
   const handleCreateStickyNote = (text: string, x: number, y: number) => {
+    const normX = x > 1 ? x / dimensions.width : x;
+    const normY = y > 1 ? y / dimensions.height : y;
+    let noteX: number;
+    if (normX > 0.5) {
+      noteX = Math.min(0.76, normX + 0.02);
+    } else {
+      noteX = Math.max(0.04, normX - 0.22);
+    }
+    const noteY = Math.max(0.04, Math.min(0.78, normY));
     const newNote: HandwritingStickyNote = {
       id: uniqueId(),
       bookHash,
       pageIndex: currentPageIndex,
-      x: Math.max(0.05, Math.min(0.75, x)),
-      y: Math.max(0.05, Math.min(0.75, y)),
+      x: noteX,
+      y: noteY,
       color: 'yellow',
       content: '',
       selectedText: text,
@@ -742,9 +889,13 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
       updatedAt: Date.now(),
     };
     addStickyNote(bookHash, currentPageIndex, newNote);
-    persistPageStickyNotes(bookHash, currentPageIndex, getStickyNotes(bookHash, currentPageIndex));
+    persistPageStickyNotes(bookHash, currentPageIndex, [
+      ...getStickyNotes(bookHash, currentPageIndex),
+      newNote,
+    ]);
     schedulePageSnapshot(currentPageIndex);
     setLassoSelection(null);
+    setGlowSelection(null);
   };
 
   const handleHighlightText = (_text: string) => {
@@ -754,9 +905,9 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
     const highlightStroke: HandwritingStroke = {
       id: uniqueId(),
       tool: 'highlighter',
-      color: '#facc15',
-      width: 14,
-      opacity: 0.35,
+      color: currentColor === '#000000' ? '#eab308' : currentColor,
+      width: Math.max(12, currentWidth * 2.2),
+      opacity: isDarkMode ? 0.45 : 0.35,
       points: [
         { x: b.left, y: midY, pressure: 0.8 },
         { x: b.right, y: midY, pressure: 0.8 },
@@ -771,7 +922,29 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
     persistPageHandwriting(bookKey, bookHash, currentPageIndex, updated, progress?.location);
     schedulePageSnapshot(currentPageIndex);
     setLassoSelection(null);
+    setGlowSelection(null);
   };
+
+  const handleAskAI = useCallback(
+    (text: string) => {
+      setLassoSelection(null);
+      setGlowSelection(null);
+      useSidebarStore.getState().setSideBarVisible(true);
+      const config = useBookDataStore.getState().getConfig(bookKey);
+      if (config?.viewSettings) {
+        useBookDataStore.getState().setConfig(bookKey, {
+          viewSettings: { ...config.viewSettings, sideBarTab: 'ai' },
+        });
+      }
+      const preview = text.length > 20 ? `${text.slice(0, 20)}...` : text;
+      eventDispatcher.dispatch('toast', {
+        type: 'info',
+        timeout: 2500,
+        message: `${_('AI')}: "${preview}"`,
+      });
+    },
+    [bookKey, _],
+  );
 
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     finishDrawing(e);
@@ -1014,7 +1187,24 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
         />
       ))}
 
-      {/* 3. Lasso Action Menu for Selected Text */}
+      {/* 3. Breathing Glow Animation Overlay on Circle-to-Clip Selection */}
+      {glowSelection && (
+        <div
+          className='absolute pointer-events-none z-30 transition-opacity duration-700 animate-pulse'
+          style={{
+            left: `${glowSelection.rect.left * width}px`,
+            top: `${glowSelection.rect.top * height}px`,
+            width: `${Math.max(20, (glowSelection.rect.right - glowSelection.rect.left) * width)}px`,
+            height: `${Math.max(16, (glowSelection.rect.bottom - glowSelection.rect.top) * height)}px`,
+            background:
+              'radial-gradient(ellipse at center, rgba(59, 130, 246, 0.28) 0%, rgba(59, 130, 246, 0.08) 70%, transparent 100%)',
+            borderRadius: '8px',
+            boxShadow: '0 0 16px 4px rgba(59, 130, 246, 0.35)',
+          }}
+        />
+      )}
+
+      {/* 4. Lasso Action Menu for Selected Text */}
       {lassoSelection && (
         <LassoActionMenu
           selection={lassoSelection}
@@ -1022,11 +1212,32 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
           containerHeight={height}
           onCreateStickyNote={handleCreateStickyNote}
           onHighlightText={handleHighlightText}
-          onClose={() => setLassoSelection(null)}
+          onAskAI={handleAskAI}
+          onClose={() => {
+            setLassoSelection(null);
+            setGlowSelection(null);
+          }}
         />
       )}
 
-      {/* 4. Active drawing canvas layer */}
+      {/* 5. Sleek HUD Toast for Multi-Touch Gestures (Two-finger Undo / Three-finger Redo) */}
+      {gestureToast && (
+        <div className='pointer-events-none absolute top-12 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-base-100/95 dark:bg-base-200/95 text-base-content shadow-xl border border-base-300 dark:border-base-700 text-xs font-semibold backdrop-blur-md animate-in fade-in zoom-in-95 duration-150'>
+          {gestureToast === 'undo' ? (
+            <>
+              <LuUndo2 className='w-3.5 h-3.5 text-primary' />
+              <span>{_('Undone')}</span>
+            </>
+          ) : (
+            <>
+              <LuRedo2 className='w-3.5 h-3.5 text-primary' />
+              <span>{_('Redone')}</span>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* 6. Active drawing canvas layer */}
       <canvas
         ref={canvasRef}
         width={width}
@@ -1040,6 +1251,10 @@ export const HandwritingLayer: React.FC<HandwritingLayerProps> = ({ bookKey, con
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
       />
     </div>
   );
